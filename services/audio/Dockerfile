@@ -1,6 +1,8 @@
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y \
+  build-essential \
+  python3-dev \
   portaudio19-dev \
   libasound2-dev \
   && rm -rf /var/lib/apt/lists/*

@@ -9,6 +9,8 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    networks:          # <-- add this block
+      - meetingbox-net
 
   audio:
     build:
