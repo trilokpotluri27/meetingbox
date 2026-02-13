@@ -10,6 +10,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 import redis
 import shutil
+import httpx
 
 from database import get_connection
 
@@ -25,6 +26,10 @@ def _get_anthropic_client():
     from anthropic import Anthropic
     _anthropic_client = Anthropic(api_key=api_key)
   return _anthropic_client
+
+# Ollama configuration for local summarization
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "llama3.1:8b")
 
 router = APIRouter()
 REDIS = redis.Redis(host="redis", port=6379, decode_responses=True)
@@ -62,10 +67,20 @@ class MeetingSummary(BaseModel):
   sentiment: str
 
 
+class LocalSummary(BaseModel):
+  summary: str
+  action_items: list[dict]
+  decisions: list[str]
+  topics: list[str]
+  sentiment: str
+  model_name: str
+
+
 class MeetingDetail(BaseModel):
   meeting: MeetingResponse
   segments: List[TranscriptSegment]
   summary: Optional[MeetingSummary]
+  local_summary: Optional[LocalSummary]
 
 
 # --- Start / Stop meeting (wire to Redis for audio service) ---
@@ -357,6 +372,175 @@ async def summarize_meeting(meeting_id: str):
   }
 
 
+@router.post("/{meeting_id}/summarize-local")
+async def summarize_meeting_local(meeting_id: str):
+  """Generate a summary using the local Ollama LLM (no API key needed)."""
+  conn = get_connection()
+  conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+  cur = conn.cursor()
+
+  # Check meeting exists
+  cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+  meeting = cur.fetchone()
+  if not meeting:
+    conn.close()
+    raise HTTPException(status_code=404, detail="Meeting not found")
+
+  # Check if local summary already exists
+  cur.execute("SELECT * FROM local_summaries WHERE meeting_id = ?", (meeting_id,))
+  existing = cur.fetchone()
+  if existing:
+    conn.close()
+    return {
+      "status": "already_exists",
+      "summary": existing["summary"],
+      "action_items": json.loads(existing["action_items"] or "[]"),
+      "decisions": json.loads(existing["decisions"] or "[]"),
+      "topics": json.loads(existing["topics"] or "[]"),
+      "sentiment": existing["sentiment"],
+      "model_name": existing.get("model_name", LOCAL_LLM_MODEL),
+    }
+
+  # Fetch transcript segments
+  cur.execute(
+    "SELECT segment_num, start_time, text FROM segments WHERE meeting_id = ? ORDER BY segment_num",
+    (meeting_id,),
+  )
+  rows = cur.fetchall()
+  conn.close()
+
+  if not rows:
+    raise HTTPException(status_code=400, detail="No transcript segments found for this meeting.")
+
+  # Build transcript text
+  parts = []
+  for r in rows:
+    mins = int((r["start_time"] or 0) // 60)
+    secs = int((r["start_time"] or 0) % 60)
+    parts.append(f"[{mins:02d}:{secs:02d}] Segment {r['segment_num']}: {r['text']}")
+  transcript = "\n\n".join(parts)
+
+  prompt = (
+    "You are analyzing a meeting transcript. Please provide:\n\n"
+    "1. Summary (2-3 sentences)\n"
+    "2. Key discussion points (3-5 bullets)\n"
+    "3. Decisions made\n"
+    "4. Action items with assignees if available\n"
+    "5. 3-5 topic hashtags\n"
+    "6. Overall sentiment (single word or short phrase)\n\n"
+    "Return **only** valid JSON with no additional text, in this exact shape:\n"
+    '{\n'
+    '  "summary": "...",\n'
+    '  "discussion_points": ["...", "..."],\n'
+    '  "decisions": ["...", "..."],\n'
+    '  "action_items": [{"task": "...", "assignee": "...", "due_date": "..."}],\n'
+    '  "topics": ["#topic1", "#topic2"],\n'
+    '  "sentiment": "Productive"\n'
+    "}\n\n"
+    f"Transcript:\n\n{transcript}"
+  )
+
+  # Call Ollama API
+  try:
+    # First, check if Ollama is reachable and model is available
+    resp = httpx.post(
+      f"{OLLAMA_HOST}/api/generate",
+      json={
+        "model": LOCAL_LLM_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+          "temperature": 0.3,
+          "num_predict": 2000,
+        },
+      },
+      timeout=300.0,  # Local inference can take a while
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    text = result.get("response", "")
+  except httpx.ConnectError:
+    raise HTTPException(
+      status_code=503,
+      detail=(
+        f"Cannot connect to Ollama at {OLLAMA_HOST}. "
+        "Make sure the ollama container is running: docker compose ps"
+      ),
+    )
+  except httpx.HTTPStatusError as exc:
+    error_body = exc.response.text
+    if "not found" in error_body.lower():
+      raise HTTPException(
+        status_code=503,
+        detail=(
+          f"Model '{LOCAL_LLM_MODEL}' not found in Ollama. "
+          f"Pull it first: docker compose exec ollama ollama pull {LOCAL_LLM_MODEL}"
+        ),
+      )
+    raise HTTPException(status_code=500, detail=f"Ollama error: {error_body}")
+  except Exception as exc:
+    raise HTTPException(status_code=500, detail=f"Local LLM error: {exc}")
+
+  # Parse JSON from response
+  if "```json" in text:
+    start = text.find("```json") + len("```json")
+    end = text.find("```", start)
+    json_str = text[start:end].strip()
+  elif "```" in text:
+    start = text.find("```") + len("```")
+    end = text.find("```", start)
+    json_str = text[start:end].strip()
+  else:
+    # Try to find JSON object in the response
+    json_start = text.find("{")
+    json_end = text.rfind("}") + 1
+    if json_start >= 0 and json_end > json_start:
+      json_str = text[json_start:json_end].strip()
+    else:
+      json_str = text.strip()
+
+  try:
+    data = json.loads(json_str)
+  except json.JSONDecodeError:
+    raise HTTPException(
+      status_code=500,
+      detail=f"Failed to parse JSON from local LLM response. Raw output: {text[:500]}",
+    )
+
+  # Save to local_summaries table
+  conn = get_connection()
+  cur = conn.cursor()
+  cur.execute(
+    """
+    INSERT OR REPLACE INTO local_summaries
+      (meeting_id, summary, action_items, decisions, topics, sentiment, model_name, generated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+    (
+      meeting_id,
+      data.get("summary", ""),
+      json.dumps(data.get("action_items", [])),
+      json.dumps(data.get("decisions", [])),
+      json.dumps(data.get("topics", [])),
+      data.get("sentiment", ""),
+      LOCAL_LLM_MODEL,
+      datetime.now().isoformat(),
+    ),
+  )
+  conn.commit()
+  conn.close()
+
+  return {
+    "status": "generated",
+    "summary": data.get("summary", ""),
+    "action_items": data.get("action_items", []),
+    "decisions": data.get("decisions", []),
+    "topics": data.get("topics", []),
+    "sentiment": data.get("sentiment", ""),
+    "model_name": LOCAL_LLM_MODEL,
+  }
+
+
 @router.get("/{meeting_id}", response_model=MeetingDetail)
 async def get_meeting(meeting_id: str):
   conn = get_connection()
@@ -382,6 +566,9 @@ async def get_meeting(meeting_id: str):
 
   cur.execute("SELECT * FROM summaries WHERE meeting_id = ?", (meeting_id,))
   summary_row = cur.fetchone()
+
+  cur.execute("SELECT * FROM local_summaries WHERE meeting_id = ?", (meeting_id,))
+  local_summary_row = cur.fetchone()
   conn.close()
 
   segments = [
@@ -405,6 +592,17 @@ async def get_meeting(meeting_id: str):
       "sentiment": summary_row["sentiment"],
     }
 
+  local_summary = None
+  if local_summary_row:
+    local_summary = {
+      "summary": local_summary_row["summary"],
+      "action_items": json.loads(local_summary_row["action_items"] or "[]"),
+      "decisions": json.loads(local_summary_row["decisions"] or "[]"),
+      "topics": json.loads(local_summary_row["topics"] or "[]"),
+      "sentiment": local_summary_row["sentiment"],
+      "model_name": local_summary_row.get("model_name", "unknown"),
+    }
+
   # derive duration if missing and we have end_time
   if meeting.get("duration") is None and meeting.get("start_time") and meeting.get("end_time"):
     try:
@@ -418,5 +616,6 @@ async def get_meeting(meeting_id: str):
     "meeting": meeting,
     "segments": segments,
     "summary": summary,
+    "local_summary": local_summary,
   }
 

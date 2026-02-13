@@ -24,14 +24,14 @@ function createSpeechRecognition(): {
 } | null {
   if (typeof window === "undefined") return null;
   const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
-  const API = (w.SpeechRecognition || w.webkitSpeechRecognition) as new () => {
+  const API = (w.SpeechRecognition || w.webkitSpeechRecognition) as (new () => {
     continuous: boolean;
     interimResults: boolean;
     lang: string;
     start: () => void;
     stop: () => void;
     onresult: ((e: SpeechResultEvent) => void) | null;
-  } | undefined;
+  }) | undefined;
   if (!API) return null;
   const rec = new API();
   rec.continuous = true;
@@ -64,7 +64,7 @@ const Dashboard: React.FC = () => {
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const streamRef = React.useRef<MediaStream | null>(null);
   const chunksRef = React.useRef<Blob[]>([]);
-  const speechRecognitionRef = React.useRef<ReturnType<typeof getSpeechRecognition> | null>(null);
+  const speechRecognitionRef = React.useRef<ReturnType<typeof createSpeechRecognition>>(null);
 
   const loadMeetings = async () => {
     try {

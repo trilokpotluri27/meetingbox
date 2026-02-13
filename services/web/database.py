@@ -61,6 +61,22 @@ def init_database() -> None:
         """
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS local_summaries (
+          meeting_id TEXT PRIMARY KEY,
+          summary TEXT,
+          action_items TEXT,
+          decisions TEXT,
+          topics TEXT,
+          sentiment TEXT,
+          model_name TEXT,
+          generated_at TEXT,
+          FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+        )
+        """
+    )
+
     conn.commit()
     conn.close()
 

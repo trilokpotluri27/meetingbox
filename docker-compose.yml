@@ -60,6 +60,15 @@ services:
     networks:
       - meetingbox-net
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: meetingbox-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - meetingbox-net
+
   web:
     build:
       context: ./services/web
@@ -67,9 +76,12 @@ services:
     restart: unless-stopped
     depends_on:
       - redis
+      - ollama
     environment:
       - PYTHONUNBUFFERED=1
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OLLAMA_HOST=http://ollama:11434
+      - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-llama3.1:8b}
     ports:
       - "8000:8000"
     volumes:
@@ -81,6 +93,7 @@ services:
 
 volumes:
   redis-data:
+  ollama-data:
 
 networks:
   meetingbox-net:
