@@ -9,7 +9,7 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    networks:          # <-- add this block
+    networks:
       - meetingbox-net
 
   audio:
@@ -23,6 +23,10 @@ services:
       - PYTHONUNBUFFERED=1
     volumes:
       - ./data/audio:/data/audio
+    devices:
+      - /dev/snd:/dev/snd       # Pass ALSA devices into the container (Linux only)
+    group_add:
+      - audio                    # Add container to host audio group (Linux only)
     networks:
       - meetingbox-net
 

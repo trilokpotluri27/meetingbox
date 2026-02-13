@@ -61,21 +61,25 @@ python scripts/ingest_test_wav.py path/to/your.wav
 
 Then open the returned `session_id` in the dashboard (e.g. `http://localhost:8000/meeting/20250211_123456`) once processing has finished.
 
-## On-device (Raspberry Pi 5) deployment
+## Linux / On-device Deployment
 
-The `scripts/` directory will contain reproducible setup instructions for:
+See **[DEPLOY_LINUX.md](DEPLOY_LINUX.md)** for the full deployment guide covering:
 
-- Flashing Ubuntu Server 24.04 to NVMe
-- Installing Docker & Docker Compose
-- Configuring audio (ALSA/PulseAudio, ReSpeaker as default input)
-- Enabling mDNS for `meetingbox.local`
+- VirtualBox Ubuntu VM setup (or any Linux host)
+- USB microphone passthrough and ALSA configuration
+- Docker stack deployment with real mic access
+- End-to-end validation test plan
+- Performance benchmarking for Pi 5 vs mini PC decisions
 
-Once the device is prepared, copy this repo to `/opt/meetingbox` and run:
+Quick start on any Ubuntu 24.04 host:
 
 ```bash
 cd /opt/meetingbox
-docker compose -f docker-compose.prod.yml up -d
+sudo ./scripts/setup_vm.sh   # installs Docker, Node.js, ALSA utils, mDNS
+cp .env.example .env && nano .env   # set ANTHROPIC_API_KEY
+cd frontend && npm install && npm run build && cd ..
+docker compose up --build -d
 ```
 
-Details will be fleshed out as the services are implemented.
+> **Note:** The `docker-compose.yml` includes `devices: ["/dev/snd"]` and `group_add: [audio]` on the audio service for Linux mic access. Comment these out if running on Windows Docker Desktop.
 
