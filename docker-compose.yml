@@ -65,10 +65,12 @@ services:
       - redis
     environment:
       - PYTHONUNBUFFERED=1
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     ports:
       - "8000:8000"
     volumes:
       - ./data/transcripts:/data/transcripts
+      - ./data/audio:/data/audio
       - ./frontend/dist:/app/static
     networks:
       - meetingbox-net

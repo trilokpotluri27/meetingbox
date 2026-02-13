@@ -112,9 +112,22 @@ class AudioCaptureService:
     print(f"[AudioCapture] Recording started - session {session_id}")
     return True
 
-  def stop_recording(self) -> str | None:
+  def stop_recording(self, session_id_from_command: str | None = None) -> str | None:
     if not self.is_recording:
       print("[AudioCapture] Not recording")
+      # Still publish so downstream can set recording_state back to idle
+      sid = session_id_from_command or self.current_session_id
+      self.redis_client.publish(
+        "events",
+        json.dumps(
+          {
+            "type": "recording_stopped",
+            "session_id": sid,
+            "path": None,
+            "timestamp": datetime.now().isoformat(),
+          }
+        ),
+      )
       return None
 
     print(f"[AudioCapture] Stopping recording - session {self.current_session_id}")
@@ -296,7 +309,7 @@ class AudioCaptureService:
           thread = threading.Thread(target=self.recording_loop, daemon=True)
           thread.start()
       elif action == "stop_recording":
-        self.stop_recording()
+        self.stop_recording(session_id_from_command=command.get("session_id"))
 
 
 if __name__ == "__main__":

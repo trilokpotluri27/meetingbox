@@ -1,10 +1,10 @@
 from contextlib import asynccontextmanager
 import asyncio
 import json
+import threading
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import redis
 
@@ -40,31 +40,41 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-
-async def redis_event_listener() -> None:
+def _redis_listener_thread(queue: asyncio.Queue, loop: asyncio.AbstractEventLoop) -> None:
+  """Blocking Redis pubsub loop - runs in a separate thread so it doesn't block the event loop."""
   client = redis.Redis(host="redis", port=6379, decode_responses=True)
   pubsub = client.pubsub()
   pubsub.subscribe("events", "audio_segments")
   print("[WebSocket] Redis event listener started")
-
-  loop = asyncio.get_running_loop()
-
   for message in pubsub.listen():
-    if message["type"] != "message":
+    if message.get("type") != "message":
       continue
     try:
       event = json.loads(message["data"])
+      loop.call_soon_threadsafe(queue.put_nowait, event)
     except json.JSONDecodeError:
       continue
-    await manager.broadcast(event)
-    await asyncio.sleep(0)  # yield control
+
+
+async def _redis_event_relay(queue: asyncio.Queue) -> None:
+  """Async task: read from queue and broadcast to WebSocket clients."""
+  while True:
+    try:
+      event = await asyncio.wait_for(queue.get(), timeout=1.0)
+      await manager.broadcast(event)
+    except asyncio.TimeoutError:
+      continue
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[override]
-  task = asyncio.create_task(redis_event_listener())
+  loop = asyncio.get_running_loop()
+  queue: asyncio.Queue = asyncio.Queue()
+  thread = threading.Thread(target=_redis_listener_thread, args=(queue, loop), daemon=True)
+  thread.start()
+  relay = asyncio.create_task(_redis_event_relay(queue))
   yield
-  task.cancel()
+  relay.cancel()
 
 
 app = FastAPI(title="MeetingBox API", version="1.0.0", lifespan=lifespan)
@@ -86,19 +96,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
   await manager.connect(websocket)
   try:
     while True:
-      # keep connection alive, echo pings if needed
       msg = await websocket.receive_text()
       await websocket.send_text(f"ack:{msg}")
   except WebSocketDisconnect:
     manager.disconnect(websocket)
 
 
-app.mount("/static", StaticFiles(directory="static", html=True), name="static")
-
-
-@app.get("/")
-async def serve_frontend() -> FileResponse:
-  return FileResponse("static/index.html")
+# Serve SPA: / and /assets/* from static (frontend/dist). Must be last so /api and /ws take precedence.
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 
 @app.get("/health")

@@ -21,8 +21,8 @@ class TranscriptionService:
     # ensure DB schema exists
     init_database()
 
-    # whisper.cpp paths inside this container
-    self.whisper_bin = "/app/whisper.cpp/main"
+    # whisper.cpp paths inside this container (cmake build)
+    self.whisper_bin = "/app/whisper.cpp/build/bin/whisper-cli"
     self.model_path = "/app/whisper.cpp/models/ggml-medium.en.bin"
 
     print(f"[Transcription] Service initialized, DB={DB_PATH}")
@@ -31,9 +31,16 @@ class TranscriptionService:
 
   def transcribe_with_whisper(self, audio_path: str) -> dict | None:
     print(f"[Transcription] Processing {audio_path}")
-    base = Path(audio_path).with_suffix("")
-    txt_path = base.with_suffix(".txt")
-    srt_path = base.with_suffix(".srt")
+    path = Path(audio_path)
+    if not path.exists():
+      print(f"[Transcription] Audio file not found: {audio_path}")
+      return None
+
+    # Use -of (output-file) to explicitly set output base path (without extension).
+    # whisper-cli will create <base>.txt and <base>.srt next to the WAV.
+    output_base = str(path.with_suffix(""))  # e.g. /data/audio/recordings/20260212_110606
+    txt_path = Path(output_base + ".txt")
+    srt_path = Path(output_base + ".srt")
 
     cmd = [
       self.whisper_bin,
@@ -41,13 +48,17 @@ class TranscriptionService:
       self.model_path,
       "-f",
       audio_path,
-      "--output-txt",
-      "--output-srt",
+      "-of",
+      output_base,
+      "-otxt",
+      "-osrt",
       "--language",
       "en",
       "--threads",
       os.getenv("WHISPER_THREADS", "4"),
     ]
+
+    print(f"[Transcription] Running: {' '.join(cmd)}")
 
     try:
       result = subprocess.run(
@@ -60,12 +71,25 @@ class TranscriptionService:
       print("[Transcription] Whisper timed out")
       return None
 
+    # Always log whisper output for debugging
+    if result.stdout:
+      for line in result.stdout.strip().splitlines()[-10:]:
+        print(f"[Transcription] whisper stdout: {line}")
+    if result.stderr:
+      for line in result.stderr.strip().splitlines()[-10:]:
+        print(f"[Transcription] whisper stderr: {line}")
+    print(f"[Transcription] whisper exit code: {result.returncode}")
+
     if result.returncode != 0:
-      print(f"[Transcription] Whisper error: {result.stderr}")
       return None
 
+    # List what files exist in the output directory for debugging
+    parent = path.parent
+    found_files = sorted(parent.glob(path.stem + ".*"))
+    print(f"[Transcription] Files matching {path.stem}.*: {[str(f) for f in found_files]}")
+
     if not txt_path.exists() or not srt_path.exists():
-      print("[Transcription] Expected output files not found")
+      print(f"[Transcription] Expected: {txt_path} and {srt_path}")
       return None
 
     full_text = txt_path.read_text(encoding="utf-8", errors="ignore")
@@ -136,6 +160,13 @@ class TranscriptionService:
     conn.commit()
     conn.close()
 
+  def _set_meeting_status(self, meeting_id: str, status: str) -> None:
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE meetings SET status = ? WHERE id = ?", (status, meeting_id))
+    conn.commit()
+    conn.close()
+
   def _save_transcription(self, meeting_id: str, transcription: dict) -> None:
     conn = get_connection()
     cur = conn.cursor()
@@ -189,13 +220,21 @@ class TranscriptionService:
 
       meeting_id = event.get("session_id")
       audio_path = event.get("path")
+
+      def set_recording_idle() -> None:
+        self.redis_client.set("recording_state", "idle")
+
       if not meeting_id or not audio_path:
+        print("[Transcription] recording_stopped missing session_id or path (no audio captured?)")
+        set_recording_idle()
         continue
 
       print(f"[Transcription] Starting transcription for {meeting_id}")
       self._ensure_meeting_record(meeting_id, audio_path)
       transcription = self.transcribe_with_whisper(audio_path)
       if not transcription:
+        self._set_meeting_status(meeting_id, "transcription_failed")
+        set_recording_idle()
         continue
 
       self._save_transcription(meeting_id, transcription)
@@ -210,6 +249,7 @@ class TranscriptionService:
           }
         ),
       )
+      set_recording_idle()
 
 
 if __name__ == "__main__":

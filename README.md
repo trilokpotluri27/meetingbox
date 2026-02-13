@@ -40,7 +40,26 @@ This MVP focuses on a **single-device pipeline** (no external calendar/email/Sla
 docker compose up --build
 ```
 
-4. Open `http://localhost:8000` (or `http://meetingbox.local:8000` on-device) to access the dashboard.
+4. **Build the frontend** (so the web container can serve it):
+
+```bash
+cd frontend && npm install && npm run build && cd ..
+```
+
+5. Open `http://localhost:8000` (or `http://meetingbox.local:8000` on-device) to access the dashboard.
+
+## Start / Stop meeting and test WAV
+
+- **From the dashboard**: use "Start meeting" to begin recording (audio service); "Stop & process" to stop and run transcription + summary.
+- **Without a mic**: use the test WAV ingest to run the full pipeline (transcription → summary) from a file:
+
+```bash
+pip install requests
+python scripts/ingest_test_wav.py path/to/your.wav
+# Optional: --base http://localhost:8000  (default)
+```
+
+Then open the returned `session_id` in the dashboard (e.g. `http://localhost:8000/meeting/20250211_123456`) once processing has finished.
 
 ## On-device (Raspberry Pi 5) deployment
 

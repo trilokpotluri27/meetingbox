@@ -35,22 +35,43 @@ const MeetingDetail: React.FC = () => {
   const { id } = useParams();
   const [data, setData] = useState<MeetingDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [summarizing, setSummarizing] = useState(false);
+  const [summarizeError, setSummarizeError] = useState<string | null>(null);
+
+  const loadMeeting = async () => {
+    try {
+      const res = await axios.get<MeetingDetailResponse>(`/api/meetings/${id}`);
+      setData(res.data);
+    } catch (err) {
+      console.error("Failed to load meeting", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await axios.get<MeetingDetailResponse>(`/api/meetings/${id}`);
-        setData(res.data);
-      } catch (err) {
-        console.error("Failed to load meeting", err);
-      } finally {
-        setLoading(false);
-      }
-    };
     if (id) {
-      load();
+      loadMeeting();
     }
   }, [id]);
+
+  const handleSummarize = async () => {
+    if (!id) return;
+    setSummarizing(true);
+    setSummarizeError(null);
+    try {
+      await axios.post(`/api/meetings/${id}/summarize`);
+      await loadMeeting();
+    } catch (err: unknown) {
+      const msg =
+        axios.isAxiosError(err) && err.response?.data?.detail
+          ? err.response.data.detail
+          : "Summarization failed. Check API key.";
+      setSummarizeError(msg);
+    } finally {
+      setSummarizing(false);
+    }
+  };
 
   if (loading) {
     return <div className="text-gray-600">Loading meeting…</div>;
@@ -75,9 +96,16 @@ const MeetingDetail: React.FC = () => {
         </Link>
       </div>
 
-      {summary && (
+      {summary ? (
         <div className="bg-white shadow-sm rounded-lg p-4 space-y-2">
-          <div className="text-sm font-semibold text-gray-900">AI Summary</div>
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-gray-900">AI Summary</div>
+            {summary.sentiment && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
+                {summary.sentiment}
+              </span>
+            )}
+          </div>
           <p className="text-sm text-gray-800">{summary.summary}</p>
           {summary.decisions.length > 0 && (
             <div>
@@ -116,6 +144,31 @@ const MeetingDetail: React.FC = () => {
                   {t}
                 </span>
               ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="bg-white shadow-sm rounded-lg p-4">
+          {segments.length > 0 ? (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleSummarize}
+                disabled={summarizing}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {summarizing ? "Summarizing…" : "Summarize with AI"}
+              </button>
+              <span className="text-xs text-gray-500">
+                Uses Claude to generate summary, action items, decisions &amp; topics
+              </span>
+              {summarizeError && (
+                <span className="text-sm text-red-600">{summarizeError}</span>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-gray-500">
+              No transcript yet — summary will be available after transcription.
             </div>
           )}
         </div>
