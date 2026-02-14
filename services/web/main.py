@@ -8,8 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import redis
 
+from database import init_database
 from routes.meetings import router as meetings_router
 from routes.system import router as system_router
+
+# Ensure all DB tables exist (including local_summaries) on startup
+init_database()
 
 
 class ConnectionManager:

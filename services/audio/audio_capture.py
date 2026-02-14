@@ -29,6 +29,7 @@ class AudioCaptureService:
 
     self.is_recording = False
     self.current_session_id: str | None = None
+    self._recording_thread: object | None = None  # threading.Thread
 
     self.vad = webrtcvad.Vad(self.config["vad"]["aggressiveness"])
 
@@ -132,6 +133,16 @@ class AudioCaptureService:
 
     print(f"[AudioCapture] Stopping recording - session {self.current_session_id}")
     self.is_recording = False
+
+    # Wait for the recording thread to finish reading before closing the stream.
+    # Without this, stream.close() races with stream.read() in the thread,
+    # causing a segfault in the native ALSA/PortAudio code.
+    if self._recording_thread is not None:
+      import threading
+      if isinstance(self._recording_thread, threading.Thread) and self._recording_thread.is_alive():
+        print("[AudioCapture] Waiting for recording thread to finish...")
+        self._recording_thread.join(timeout=5.0)
+      self._recording_thread = None
 
     if self.stream:
       self.stream.stop_stream()
@@ -308,6 +319,7 @@ class AudioCaptureService:
 
           thread = threading.Thread(target=self.recording_loop, daemon=True)
           thread.start()
+          self._recording_thread = thread
       elif action == "stop_recording":
         self.stop_recording(session_id_from_command=command.get("session_id"))
 
