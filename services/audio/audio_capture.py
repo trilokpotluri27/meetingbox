@@ -47,27 +47,80 @@ class AudioCaptureService:
   # --- Device handling -------------------------------------------------
 
   def find_mic_device(self) -> int | None:
-    """Attempt to locate the ReSpeaker (or other USB mic) by name."""
+    """
+    Auto-detect the best available input device.
+
+    Strategy (no hardcoded mic names):
+      1. Enumerate all input-capable devices.
+      2. Test each one to see if it actually supports our sample rate.
+      3. Prefer USB / external devices over built-in ones (they're almost
+         always the meeting mic).
+      4. If nothing passes the sample-rate test, return None (system default).
+
+    This way any USB mic -- ReSpeaker, Jabra, Samson, cheap USB dongle,
+    etc. -- works automatically without code changes.
+    """
     info = self.audio.get_host_api_info_by_index(0)
     num_devices = info.get("deviceCount", 0)
 
+    # Collect every input device with its metadata
+    candidates: list[dict] = []
     for i in range(num_devices):
       device_info = self.audio.get_device_info_by_host_api_device_index(0, i)
+      if device_info.get("maxInputChannels", 0) <= 0:
+        continue
       name = device_info.get("name", "")
-      if device_info.get("maxInputChannels", 0) > 0:
-        # Match common USB mic names: ReSpeaker, UAC, or any USB audio device
-        if "ReSpeaker" in name or "UAC" in name or "USB" in name:
-          print(f"[AudioCapture] Using input device {i}: {name}")
-          return i
+      candidates.append({"index": i, "name": name, "info": device_info})
 
-    # Fallback: use the first available input device
-    for i in range(num_devices):
-      device_info = self.audio.get_device_info_by_host_api_device_index(0, i)
-      if device_info.get("maxInputChannels", 0) > 0:
-        print(f"[AudioCapture] No USB mic found, using first available input device {i}: {device_info.get('name')}")
-        return i
+    if not candidates:
+      print("[AudioCapture] No input devices found at all")
+      return None
 
-    print("[AudioCapture] No input devices found, using system default")
+    print(f"[AudioCapture] Found {len(candidates)} input device(s):")
+    for c in candidates:
+      print(f"  [{c['index']}] {c['name']}  (rate={c['info'].get('defaultSampleRate')})")
+
+    # Test which devices actually support our sample rate
+    def supports_sample_rate(dev: dict) -> bool:
+      try:
+        ok = self.audio.is_format_supported(
+          self.RATE,
+          input_device=dev["index"],
+          input_channels=self.CHANNELS,
+          input_format=self.FORMAT,
+        )
+        return bool(ok)
+      except (ValueError, OSError):
+        return False
+
+    # Classify into USB/external vs built-in
+    usb_keywords = ["usb", "uac", "respeaker", "jabra", "samson", "blue",
+                     "yeti", "rode", "fifine", "tonor", "boya", "maono",
+                     "external", "webcam", "camera"]
+    builtin_keywords = ["hdmi", "built-in", "bcm", "broadcom", "headphone",
+                         "analog", "spdif", "iec958"]
+
+    def is_likely_usb(name: str) -> bool:
+      low = name.lower()
+      if any(kw in low for kw in usb_keywords):
+        return True
+      if any(kw in low for kw in builtin_keywords):
+        return False
+      # Unknown device -- treat as external (better to try it than skip it)
+      return True
+
+    # Sort: USB/external first, then built-in
+    candidates.sort(key=lambda c: (0 if is_likely_usb(c["name"]) else 1))
+
+    # Pick the first candidate that supports our sample rate
+    for c in candidates:
+      if supports_sample_rate(c):
+        label = "USB/external" if is_likely_usb(c["name"]) else "built-in"
+        print(f"[AudioCapture] Selected device {c['index']}: {c['name']} ({label}, {self.RATE}Hz OK)")
+        return c["index"]
+
+    # Nothing supports our rate -- let PyAudio try the system default
+    print(f"[AudioCapture] WARNING: No device supports {self.RATE}Hz. Falling back to system default.")
     return None
 
   # --- Recording lifecycle ---------------------------------------------
