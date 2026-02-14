@@ -1,45 +1,57 @@
-import React from "react";
-import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
-import Dashboard from "./components/Dashboard";
-import MeetingDetail from "./components/MeetingDetail";
-import SystemStatus from "./components/SystemStatus";
+// Root application component — routing, toaster, error boundary
 
-const App: React.FC = () => {
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { Toaster } from 'react-hot-toast'
+import { useAuthStore } from './store/authStore'
+import Layout from './components/layout/Layout'
+import ErrorBoundary from './components/ErrorBoundary'
+import Onboarding from './pages/Onboarding'
+import Dashboard from './pages/Dashboard'
+import MeetingDetail from './pages/MeetingDetail'
+import LiveRecording from './pages/LiveRecording'
+import Settings from './pages/Settings'
+import SystemStatus from './pages/SystemStatus'
+
+export default function App() {
+  const onboardingComplete = useAuthStore((s) => s.onboardingComplete)
+
   return (
-    <BrowserRouter>
-      <div className="min-h-screen bg-gray-50">
-        <nav className="bg-white shadow-sm">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between h-16 items-center">
-              <div className="flex items-center space-x-6">
-                <span className="text-xl font-semibold text-gray-900">
-                  MeetingBox
-                </span>
-                <Link to="/" className="text-sm text-gray-700 hover:text-black">
-                  Dashboard
-                </Link>
-                <Link
-                  to="/system"
-                  className="text-sm text-gray-700 hover:text-black"
-                >
-                  System
-                </Link>
-              </div>
-            </div>
-          </div>
-        </nav>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <Toaster position="top-right" />
 
-        <main className="max-w-6xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/meeting/:id" element={<MeetingDetail />} />
-            <Route path="/system" element={<SystemStatus />} />
-          </Routes>
-        </main>
-      </div>
-    </BrowserRouter>
-  );
-};
+        <Routes>
+          {/* Onboarding — only accessible if not yet completed */}
+          <Route
+            path="/onboarding"
+            element={
+              onboardingComplete ? <Navigate to="/dashboard" /> : <Onboarding />
+            }
+          />
 
-export default App;
+          {/* Main app (protected by layout + onboarding check) */}
+          <Route
+            path="/"
+            element={
+              !onboardingComplete ? (
+                <Navigate to="/onboarding" />
+              ) : (
+                <Layout />
+              )
+            }
+          >
+            <Route index element={<Navigate to="/dashboard" />} />
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="meeting/:id" element={<MeetingDetail />} />
+            <Route path="live" element={<LiveRecording />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="system" element={<SystemStatus />} />
+          </Route>
 
+          {/* Catch-all */}
+          <Route path="*" element={<Navigate to="/dashboard" />} />
+        </Routes>
+      </BrowserRouter>
+    </ErrorBoundary>
+  )
+}
