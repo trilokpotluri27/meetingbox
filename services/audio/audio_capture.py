@@ -54,11 +54,20 @@ class AudioCaptureService:
     for i in range(num_devices):
       device_info = self.audio.get_device_info_by_host_api_device_index(0, i)
       name = device_info.get("name", "")
-      if ("ReSpeaker" in name or "UAC" in name) and device_info.get("maxInputChannels", 0) > 0:
-        print(f"[AudioCapture] Using input device {i}: {name}")
+      if device_info.get("maxInputChannels", 0) > 0:
+        # Match common USB mic names: ReSpeaker, UAC, or any USB audio device
+        if "ReSpeaker" in name or "UAC" in name or "USB" in name:
+          print(f"[AudioCapture] Using input device {i}: {name}")
+          return i
+
+    # Fallback: use the first available input device
+    for i in range(num_devices):
+      device_info = self.audio.get_device_info_by_host_api_device_index(0, i)
+      if device_info.get("maxInputChannels", 0) > 0:
+        print(f"[AudioCapture] No USB mic found, using first available input device {i}: {device_info.get('name')}")
         return i
 
-    print("[AudioCapture] ReSpeaker not found, using default input")
+    print("[AudioCapture] No input devices found, using system default")
     return None
 
   # --- Recording lifecycle ---------------------------------------------
