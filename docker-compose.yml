@@ -108,11 +108,18 @@ services:
   # ================================================================
   # Renders directly to the attached display via X11 passthrough.
   # Requires: X server running on the host (startx / lightdm).
+  #
+  # DEV MODE: profiles: ["screen"] means this container does NOT
+  # auto-start with 'docker compose up'. To start it manually:
+  #   docker compose --profile screen up -d device-ui
+  # Remove the profiles line for production.
   # ================================================================
   device-ui:
     build:
       context: ./device-ui
     container_name: meetingbox-ui
+    profiles:
+      - screen
     restart: unless-stopped
     depends_on:
       - web
@@ -127,8 +134,8 @@ services:
       # Kivy settings
       - KIVY_WINDOW=sdl2
       - KIVY_NO_CONSOLELOG=1
-      # Production defaults
-      - FULLSCREEN=1
+      # Dev mode: windowed (change to FULLSCREEN=1 for production)
+      - FULLSCREEN=0
       - MOCK_BACKEND=0
     volumes:
       # X11 socket — lets the container draw on the host display

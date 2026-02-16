@@ -111,19 +111,21 @@ echo ""
 echo "3/7  Configuring display..."
 
 # Auto-start X on tty1 login
+# NOTE: Disabled during development. Uncomment for production with screen.
 BASHRC="$ACTUAL_HOME/.bashrc"
-if ! grep -q "startx" "$BASHRC" 2>/dev/null; then
-    cat >> "$BASHRC" << 'XSTART'
-
-# Auto-start X on tty1 (MeetingBox display)
-if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
-    startx -- -nocursor 2>/dev/null
-fi
-XSTART
-    echo "   Added auto-startx to .bashrc"
-else
-    echo "   startx already in .bashrc, skipping"
-fi
+echo "   Skipping auto-startx (dev mode — enable for production)"
+# if ! grep -q "startx" "$BASHRC" 2>/dev/null; then
+#     cat >> "$BASHRC" << 'XSTART'
+#
+# # Auto-start X on tty1 (MeetingBox display)
+# if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+#     startx -- -nocursor 2>/dev/null
+# fi
+# XSTART
+#     echo "   Added auto-startx to .bashrc"
+# else
+#     echo "   startx already in .bashrc, skipping"
+# fi
 
 # Create .xinitrc — starts X, disables blanking, allows Docker to draw
 cat > "$ACTUAL_HOME/.xinitrc" << 'XINIT'

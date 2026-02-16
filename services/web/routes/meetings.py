@@ -62,18 +62,67 @@ class TranscriptSegment(BaseModel):
 class MeetingSummary(BaseModel):
   summary: str
   action_items: list[dict]
-  decisions: list[str]
-  topics: list[str]
+  decisions: list
+  topics: list
   sentiment: str
 
 
 class LocalSummary(BaseModel):
   summary: str
   action_items: list[dict]
-  decisions: list[str]
-  topics: list[str]
+  decisions: list
+  topics: list
   sentiment: str
   model_name: str
+
+
+def _normalize_summary_data(data: dict) -> dict:
+  """Normalize LLM output so decisions/topics are always lists of strings.
+  LLMs sometimes return decisions as objects like {"decision": "...", "responsible_party": null}
+  instead of plain strings. This coerces everything to strings."""
+  # Normalize decisions
+  raw_decisions = data.get("decisions", [])
+  decisions = []
+  for d in raw_decisions:
+    if isinstance(d, str):
+      decisions.append(d)
+    elif isinstance(d, dict):
+      # Extract the text from common LLM object shapes
+      decisions.append(d.get("decision") or d.get("text") or d.get("description") or str(d))
+    else:
+      decisions.append(str(d))
+  data["decisions"] = decisions
+
+  # Normalize topics
+  raw_topics = data.get("topics", [])
+  topics = []
+  for t in raw_topics:
+    if isinstance(t, str):
+      topics.append(t)
+    elif isinstance(t, dict):
+      topics.append(t.get("topic") or t.get("name") or t.get("text") or str(t))
+    else:
+      topics.append(str(t))
+  data["topics"] = topics
+
+  # Normalize action_items (ensure they're dicts)
+  raw_actions = data.get("action_items", [])
+  actions = []
+  for a in raw_actions:
+    if isinstance(a, dict):
+      actions.append(a)
+    elif isinstance(a, str):
+      actions.append({"task": a, "assignee": None, "due_date": None})
+    else:
+      actions.append({"task": str(a), "assignee": None, "due_date": None})
+  data["action_items"] = actions
+
+  # Ensure sentiment is a string
+  sentiment = data.get("sentiment", "")
+  if not isinstance(sentiment, str):
+    data["sentiment"] = str(sentiment)
+
+  return data
 
 
 class MeetingDetail(BaseModel):
@@ -265,14 +314,15 @@ async def summarize_meeting(meeting_id: str):
   existing = cur.fetchone()
   if existing:
     conn.close()
-    return {
-      "status": "already_exists",
+    result = _normalize_summary_data({
       "summary": existing["summary"],
       "action_items": json.loads(existing["action_items"] or "[]"),
       "decisions": json.loads(existing["decisions"] or "[]"),
       "topics": json.loads(existing["topics"] or "[]"),
       "sentiment": existing["sentiment"],
-    }
+    })
+    result["status"] = "already_exists"
+    return result
 
   # Fetch transcript segments
   cur.execute(
@@ -339,6 +389,9 @@ async def summarize_meeting(meeting_id: str):
   except json.JSONDecodeError:
     raise HTTPException(status_code=500, detail="Failed to parse JSON from Claude response.")
 
+  # Normalize LLM output (decisions/topics may be objects instead of strings)
+  data = _normalize_summary_data(data)
+
   # Save to DB
   conn = get_connection()
   cur = conn.cursor()
@@ -391,15 +444,16 @@ async def summarize_meeting_local(meeting_id: str):
   existing = cur.fetchone()
   if existing:
     conn.close()
-    return {
-      "status": "already_exists",
+    result = _normalize_summary_data({
       "summary": existing["summary"],
       "action_items": json.loads(existing["action_items"] or "[]"),
       "decisions": json.loads(existing["decisions"] or "[]"),
       "topics": json.loads(existing["topics"] or "[]"),
       "sentiment": existing["sentiment"],
-      "model_name": existing.get("model_name", LOCAL_LLM_MODEL),
-    }
+    })
+    result["status"] = "already_exists"
+    result["model_name"] = existing.get("model_name", LOCAL_LLM_MODEL)
+    return result
 
   # Fetch transcript segments
   cur.execute(
@@ -507,6 +561,9 @@ async def summarize_meeting_local(meeting_id: str):
       detail=f"Failed to parse JSON from local LLM response. Raw output: {text[:500]}",
     )
 
+  # Normalize LLM output (decisions/topics may be objects instead of strings)
+  data = _normalize_summary_data(data)
+
   # Save to local_summaries table
   conn = get_connection()
   cur = conn.cursor()
@@ -584,24 +641,24 @@ async def get_meeting(meeting_id: str):
 
   summary = None
   if summary_row:
-    summary = {
+    summary = _normalize_summary_data({
       "summary": summary_row["summary"],
       "action_items": json.loads(summary_row["action_items"] or "[]"),
       "decisions": json.loads(summary_row["decisions"] or "[]"),
       "topics": json.loads(summary_row["topics"] or "[]"),
       "sentiment": summary_row["sentiment"],
-    }
+    })
 
   local_summary = None
   if local_summary_row:
-    local_summary = {
+    local_summary = _normalize_summary_data({
       "summary": local_summary_row["summary"],
       "action_items": json.loads(local_summary_row["action_items"] or "[]"),
       "decisions": json.loads(local_summary_row["decisions"] or "[]"),
       "topics": json.loads(local_summary_row["topics"] or "[]"),
       "sentiment": local_summary_row["sentiment"],
-      "model_name": local_summary_row.get("model_name", "unknown"),
-    }
+    })
+    local_summary["model_name"] = local_summary_row.get("model_name", "unknown")
 
   # derive duration if missing and we have end_time
   if meeting.get("duration") is None and meeting.get("start_time") and meeting.get("end_time"):

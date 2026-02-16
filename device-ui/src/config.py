@@ -41,8 +41,8 @@ DISPLAY_ORIENTATION = os.getenv('DISPLAY_ORIENTATION', 'landscape')
 # Framerate
 TARGET_FPS = int(os.getenv('TARGET_FPS', '30'))
 
-# Fullscreen mode
-FULLSCREEN = os.getenv('FULLSCREEN', '1') == '1'
+# Fullscreen mode (set FULLSCREEN=0 for windowed dev mode)
+FULLSCREEN = os.getenv('FULLSCREEN', '0') == '1'
 
 # ============================================================================
 # TOUCH SETTINGS
