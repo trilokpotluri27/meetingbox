@@ -81,7 +81,7 @@ services:
       - PYTHONUNBUFFERED=1
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OLLAMA_HOST=http://ollama:11434
-      - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-llama3.1:8b}
+      - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-phi3:mini}
     ports:
       - "8000:8000"
     volumes:

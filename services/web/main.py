@@ -11,7 +11,6 @@ import redis
 from database import init_database
 from routes.meetings import router as meetings_router
 from routes.system import router as system_router
-from routes.device import router as device_router
 
 # Ensure all DB tables exist (including local_summaries) on startup
 init_database()
@@ -94,7 +93,6 @@ app.add_middleware(
 
 app.include_router(meetings_router, prefix="/api/meetings", tags=["meetings"])
 app.include_router(system_router, prefix="/api/system", tags=["system"])
-app.include_router(device_router, prefix="/api/device", tags=["device"])
 
 
 @app.websocket("/ws")

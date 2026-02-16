@@ -11,7 +11,7 @@ Environment="BACKEND_URL=http://localhost:8000"
 Environment="KIVY_NO_CONSOLELOG=1"
 WorkingDirectory=/opt/meetingbox/device-ui
 ExecStartPre=/bin/sleep 5
-ExecStart=/usr/bin/python3 /opt/meetingbox/device-ui/src/main.py
+ExecStart=/opt/meetingbox/device-ui/venv/bin/python /opt/meetingbox/device-ui/src/main.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

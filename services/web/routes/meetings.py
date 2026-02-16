@@ -29,7 +29,7 @@ def _get_anthropic_client():
 
 # Ollama configuration for local summarization
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "llama3.1:8b")
+LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "phi3:mini")
 
 router = APIRouter()
 REDIS = redis.Redis(host="redis", port=6379, decode_responses=True)
@@ -115,34 +115,6 @@ async def recording_status():
   state = REDIS.get("recording_state") or "idle"
   current_id = REDIS.get("current_meeting_id")
   return {"state": state, "session_id": current_id}
-
-
-@router.post("/pause")
-async def pause_meeting():
-  """Pause the current recording. Sends pause command to audio service via Redis."""
-  session_id = REDIS.get("current_meeting_id")
-  if not session_id:
-    raise HTTPException(status_code=400, detail="No active recording to pause")
-  REDIS.publish(
-    "commands",
-    json.dumps({"action": "pause_recording", "session_id": session_id}),
-  )
-  REDIS.set("recording_state", "paused")
-  return {"session_id": session_id, "status": "paused"}
-
-
-@router.post("/resume")
-async def resume_meeting():
-  """Resume a paused recording. Sends resume command to audio service via Redis."""
-  session_id = REDIS.get("current_meeting_id")
-  if not session_id:
-    raise HTTPException(status_code=400, detail="No active recording to resume")
-  REDIS.publish(
-    "commands",
-    json.dumps({"action": "resume_recording", "session_id": session_id}),
-  )
-  REDIS.set("recording_state", "recording")
-  return {"session_id": session_id, "status": "recording"}
 
 
 @router.post("/reset-recording-state")
@@ -646,33 +618,4 @@ async def get_meeting(meeting_id: str):
     "summary": summary,
     "local_summary": local_summary,
   }
-
-
-@router.delete("/{meeting_id}")
-async def delete_meeting(meeting_id: str):
-  """Delete a meeting and all associated data (segments, summaries, audio)."""
-  conn = get_connection()
-  conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
-  cur = conn.cursor()
-
-  cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
-  meeting = cur.fetchone()
-  if not meeting:
-    conn.close()
-    raise HTTPException(status_code=404, detail="Meeting not found")
-
-  # Delete audio file if it exists
-  if meeting.get("audio_path"):
-    audio_path = Path(meeting["audio_path"])
-    audio_path.unlink(missing_ok=True)
-
-  # Delete from DB
-  cur.execute("DELETE FROM segments WHERE meeting_id = ?", (meeting_id,))
-  cur.execute("DELETE FROM summaries WHERE meeting_id = ?", (meeting_id,))
-  cur.execute("DELETE FROM local_summaries WHERE meeting_id = ?", (meeting_id,))
-  cur.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
-  conn.commit()
-  conn.close()
-
-  return {"status": "deleted", "meeting_id": meeting_id}
 
