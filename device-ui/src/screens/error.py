@@ -1,107 +1,135 @@
 """
-Error Screen
+Error Screen – General error display (480 × 320)
 
-Landscape compact layout.
+PRD §7.1 – Shows error type, message, recovery options.
 """
 
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
+from kivy.uix.widget import Widget
 
 from screens.base_screen import BaseScreen
-from components.button import PrimaryButton
+from components.button import PrimaryButton, SecondaryButton
 from components.status_bar import StatusBar
 from config import COLORS, FONT_SIZES, SPACING
 
 
 class ErrorScreen(BaseScreen):
-    """Error screen — landscape 480x320."""
-    
+    """Error screen – PRD §7.1."""
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.error_type = "Error"
-        self.error_message = "An error occurred"
-        self.build_ui()
-    
-    def build_ui(self):
-        layout = BoxLayout(orientation='vertical')
-        
+        self.error_type = 'Error'
+        self.error_message = 'An error occurred'
+        self.recovery_action = None
+        self.recovery_text = None
+        self._build_ui()
+
+    def _build_ui(self):
+        root = BoxLayout(orientation='vertical')
+        self.make_dark_bg(root)
+
+        # Status bar
         self.status_bar = StatusBar(
             status_text='ERROR',
-            status_color=COLORS['red'],
-            device_name='MeetingBox'
+            status_color=COLORS['yellow'],
+            device_name='MeetingBox',
+            show_settings=True,
         )
-        layout.add_widget(self.status_bar)
-        
-        # Horizontal: error info left, action right
-        content = BoxLayout(
-            orientation='horizontal',
-            padding=SPACING['screen_padding'],
-            spacing=SPACING['section_spacing']
+        root.add_widget(self.status_bar)
+
+        root.add_widget(Widget(size_hint=(1, 0.05)))
+
+        # Warning icon
+        icon = Label(
+            text='⚠',
+            font_size=52,
+            color=COLORS['yellow'],
+            halign='center',
+            size_hint=(1, None), height=60,
         )
-        
-        # Left: error details
-        left = BoxLayout(
-            orientation='vertical',
-            size_hint=(0.6, 1),
-            spacing=SPACING['button_spacing']
-        )
-        
-        icon_label = Label(
-            text='!',
-            font_size=32,
-            size_hint=(1, 0.25),
-            color=COLORS['red'],
-            bold=True
-        )
-        left.add_widget(icon_label)
-        
+        root.add_widget(icon)
+
+        # Error title
         self.type_label = Label(
             text=self.error_type,
             font_size=FONT_SIZES['large'],
-            size_hint=(1, 0.25),
-            color=COLORS['gray_900'],
             bold=True,
-            halign='left'
+            color=COLORS['white'],
+            halign='center',
+            size_hint=(1, None), height=30,
         )
         self.type_label.bind(size=self.type_label.setter('text_size'))
-        left.add_widget(self.type_label)
-        
+        root.add_widget(self.type_label)
+
+        # Error message
         self.message_label = Label(
             text=self.error_message,
-            font_size=FONT_SIZES['small'],
-            size_hint=(1, 0.5),
-            color=COLORS['gray_700'],
-            halign='left',
-            valign='top'
+            font_size=FONT_SIZES['small'] + 2,
+            color=COLORS['gray_500'],
+            halign='center',
+            valign='top',
+            size_hint=(1, None), height=50,
         )
         self.message_label.bind(size=self.message_label.setter('text_size'))
-        left.add_widget(self.message_label)
-        
-        content.add_widget(left)
-        
-        # Right: go home button
-        right = BoxLayout(
+        root.add_widget(self.message_label)
+
+        root.add_widget(Widget(size_hint=(1, None), height=8))
+
+        # Recovery button (conditionally visible)
+        btn_col = BoxLayout(
             orientation='vertical',
-            size_hint=(0.4, 1),
-            spacing=SPACING['button_spacing']
+            size_hint=(1, None), height=130,
+            padding=[80, 0],
+            spacing=SPACING['button_spacing'],
         )
-        right.add_widget(Label(size_hint=(1, 0.4)))  # spacer
-        
-        home_btn = PrimaryButton(
+
+        self.recovery_btn = PrimaryButton(
+            text='TRY AGAIN',
+            font_size=FONT_SIZES['medium'],
+            size_hint=(1, None), height=55,
+        )
+        self.recovery_btn.bind(on_press=self._on_recovery)
+        btn_col.add_widget(self.recovery_btn)
+
+        self.home_btn = SecondaryButton(
             text='GO HOME',
-            size_hint=(1, 0.4)
+            font_size=FONT_SIZES['medium'],
+            size_hint=(1, None), height=55,
         )
-        home_btn.bind(on_press=lambda x: self.goto('home'))
-        right.add_widget(home_btn)
-        
-        right.add_widget(Label(size_hint=(1, 0.2)))  # spacer
-        
-        content.add_widget(right)
-        layout.add_widget(content)
-        self.add_widget(layout)
-    
-    def set_error(self, error_type: str, message: str):
+        self.home_btn.bind(on_press=lambda _: self.goto('home'))
+        btn_col.add_widget(self.home_btn)
+
+        root.add_widget(btn_col)
+
+        root.add_widget(Widget())
+
+        # Footer
+        footer = self.build_footer()
+        root.add_widget(footer)
+
+        self.add_widget(root)
+
+    # ------------------------------------------------------------------
+    def set_error(self, error_type: str, message: str,
+                  recovery_text: str = None, recovery_action=None):
         self.error_type = error_type
         self.error_message = message
+        self.recovery_action = recovery_action
+        self.recovery_text = recovery_text
+
         self.type_label.text = error_type
         self.message_label.text = message
+
+        if recovery_text:
+            self.recovery_btn.text = recovery_text
+            self.recovery_btn.opacity = 1
+            self.recovery_btn.disabled = False
+        else:
+            self.recovery_btn.text = 'TRY AGAIN'
+
+    def _on_recovery(self, _inst):
+        if self.recovery_action:
+            self.recovery_action()
+        else:
+            self.goto('home')

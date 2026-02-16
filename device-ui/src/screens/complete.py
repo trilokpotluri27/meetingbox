@@ -1,166 +1,171 @@
 """
-Complete Screen
+Complete Screen – Meeting saved confirmation (480 × 320)
 
-Landscape layout: summary left, actions right.
+PRD §5.10 – Checkmark animation, quick stats, auto-return to Home.
+Duration: 5 seconds (or tap to skip).
 """
 
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
+from kivy.uix.widget import Widget
+from kivy.animation import Animation
 from kivy.clock import Clock
 from async_helper import run_async
 
 from screens.base_screen import BaseScreen
-from components.button import PrimaryButton, SecondaryButton
 from components.status_bar import StatusBar
 from config import COLORS, FONT_SIZES, SPACING, AUTO_RETURN_DELAY
 
 
 class CompleteScreen(BaseScreen):
-    """Complete screen — landscape 480x320."""
-    
+    """Complete / Meeting Saved screen – PRD §5.10."""
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.meeting_id = None
-        self.auto_return_event = None
-        self.build_ui()
-    
-    def build_ui(self):
-        layout = BoxLayout(orientation='vertical')
-        
+        self._auto_event = None
+        self._build_ui()
+
+    def _build_ui(self):
+        root = BoxLayout(orientation='vertical')
+        self.make_dark_bg(root)
+
+        # Status bar
         self.status_bar = StatusBar(
             status_text='COMPLETE',
             status_color=COLORS['green'],
-            device_name='Conference Room A'
+            device_name='Conference Room A',
+            show_settings=True,
         )
-        layout.add_widget(self.status_bar)
-        
-        # Horizontal split
-        content = BoxLayout(
-            orientation='horizontal',
-            padding=SPACING['screen_padding'],
-            spacing=SPACING['section_spacing']
-        )
-        
-        # Left: meeting info
-        left = BoxLayout(
-            orientation='vertical',
-            size_hint=(0.55, 1),
-            spacing=SPACING['button_spacing']
-        )
-        
-        success_label = Label(
-            text='Meeting Saved',
-            font_size=FONT_SIZES['large'],
-            size_hint=(1, 0.2),
-            color=COLORS['green'],
-            halign='left',
-            bold=True
-        )
-        success_label.bind(size=success_label.setter('text_size'))
-        left.add_widget(success_label)
-        
-        self.meeting_title = Label(
-            text='Untitled Meeting',
-            font_size=FONT_SIZES['medium'],
-            size_hint=(1, 0.2),
-            color=COLORS['gray_900'],
+        root.add_widget(self.status_bar)
+
+        root.add_widget(Widget(size_hint=(1, 0.08)))
+
+        # Checkmark
+        self.check_label = Label(
+            text='✓',
+            font_size=60,
             bold=True,
-            halign='left'
+            color=COLORS['green'],
+            halign='center',
+            size_hint=(1, None), height=70,
+            opacity=0,
         )
-        self.meeting_title.bind(size=self.meeting_title.setter('text_size'))
-        left.add_widget(self.meeting_title)
-        
+        root.add_widget(self.check_label)
+
+        # Meeting Saved!
+        self.title_label = Label(
+            text='Meeting Saved!',
+            font_size=FONT_SIZES['large'],
+            bold=True,
+            color=COLORS['white'],
+            halign='center',
+            size_hint=(1, None), height=30,
+        )
+        root.add_widget(self.title_label)
+
+        # Meeting info
+        self.info_label = Label(
+            text='',
+            font_size=FONT_SIZES['medium'],
+            bold=True,
+            color=COLORS['white'],
+            halign='center',
+            size_hint=(1, None), height=24,
+        )
+        root.add_widget(self.info_label)
+
+        root.add_widget(Widget(size_hint=(1, None), height=8))
+
+        # Quick stats
         self.stats_label = Label(
-            text='- 0 action items\n- 0 decisions',
-            font_size=FONT_SIZES['small'],
-            size_hint=(1, 0.35),
-            color=COLORS['gray_700'],
-            halign='left',
-            valign='top'
+            text='',
+            font_size=FONT_SIZES['small'] + 2,
+            color=COLORS['gray_500'],
+            halign='center',
+            valign='top',
+            size_hint=(1, None), height=60,
         )
         self.stats_label.bind(size=self.stats_label.setter('text_size'))
-        left.add_widget(self.stats_label)
-        
-        self.countdown_label = Label(
-            text=f'Auto-home in {AUTO_RETURN_DELAY}s',
-            font_size=FONT_SIZES['tiny'],
-            size_hint=(1, 0.1),
-            color=COLORS['gray_500']
-        )
-        left.add_widget(self.countdown_label)
-        
-        content.add_widget(left)
-        
-        # Right: action buttons
-        right = BoxLayout(
-            orientation='vertical',
-            size_hint=(0.45, 1),
-            spacing=SPACING['button_spacing']
-        )
-        
-        view_btn = SecondaryButton(
-            text='VIEW\nSUMMARY',
-            size_hint=(1, 0.45)
-        )
-        view_btn.bind(on_press=self.on_view_summary)
-        right.add_widget(view_btn)
-        
-        new_btn = PrimaryButton(
-            text='NEW\nMEETING',
-            size_hint=(1, 0.45)
-        )
-        new_btn.bind(on_press=self.on_start_new)
-        right.add_widget(new_btn)
-        
-        content.add_widget(right)
-        layout.add_widget(content)
-        self.add_widget(layout)
-    
+        root.add_widget(self.stats_label)
+
+        root.add_widget(Widget())
+
+        # Footer
+        footer = self.build_footer()
+        root.add_widget(footer)
+
+        self.add_widget(root)
+
+    # ------------------------------------------------------------------
     def set_meeting_id(self, meeting_id: str):
         self.meeting_id = meeting_id
-        self.load_meeting_info()
-    
-    def load_meeting_info(self):
+        self._load_meeting_info()
+
+    def _load_meeting_info(self):
         if not self.meeting_id:
             return
+
         async def _load():
             try:
                 meeting = await self.backend.get_meeting_detail(self.meeting_id)
-                Clock.schedule_once(lambda dt: setattr(self.meeting_title, 'text', meeting['title']), 0)
+                title = meeting.get('title', 'Untitled')
+                dur = meeting.get('duration', 0) // 60
                 summary = meeting.get('summary', {})
                 ac = len(summary.get('action_items', []))
                 dc = len(summary.get('decisions', []))
-                stats = f"- {ac} action item{'s' if ac != 1 else ''}\n- {dc} decision{'s' if dc != 1 else ''}"
-                Clock.schedule_once(lambda dt: setattr(self.stats_label, 'text', stats), 0)
-            except Exception as e:
-                print(f"Failed to load meeting info: {e}")
+
+                privacy = getattr(self.app, 'privacy_mode', False)
+                if privacy:
+                    stats = '• Transcript ready\n• Local storage only\n• AI features disabled'
+                else:
+                    stats_parts = []
+                    if ac:
+                        stats_parts.append(f'• {ac} action item{"s" if ac != 1 else ""}')
+                    if dc:
+                        stats_parts.append(f'• {dc} decision{"s" if dc != 1 else ""} made')
+                    stats_parts.append('• Summary ready')
+                    stats = '\n'.join(stats_parts)
+
+                def _update(_dt):
+                    self.info_label.text = f'{title} · {dur} minutes'
+                    self.stats_label.text = stats
+
+                Clock.schedule_once(_update, 0)
+            except Exception:
+                pass
+
         run_async(_load())
-    
+
+    # ------------------------------------------------------------------
     def on_enter(self):
-        self.start_auto_return()
-    
+        # Checkmark spring-in
+        self.check_label.opacity = 0
+        anim = Animation(opacity=1, duration=0.5)
+        anim.start(self.check_label)
+
+        # Privacy
+        privacy = getattr(self.app, 'privacy_mode', False)
+        if privacy:
+            self.status_bar.status_text = 'COMPLETE (Privacy)'
+
+        # Auto-return
+        self._auto_event = Clock.schedule_once(self._go_home, AUTO_RETURN_DELAY)
+
     def on_leave(self):
-        if self.auto_return_event:
-            self.auto_return_event.cancel()
-            self.auto_return_event = None
-    
-    def start_auto_return(self):
-        self.countdown_seconds = AUTO_RETURN_DELAY
-        self.auto_return_event = Clock.schedule_interval(self.update_countdown, 1.0)
-    
-    def update_countdown(self, dt):
-        self.countdown_seconds -= 1
-        if self.countdown_seconds <= 0:
-            self.goto('home')
-            return False
-        self.countdown_label.text = f'Auto-home in {self.countdown_seconds}s'
-        return True
-    
-    def on_view_summary(self, instance):
-        if self.meeting_id:
-            detail_screen = self.manager.get_screen('meeting_detail')
-            detail_screen.set_meeting_id(self.meeting_id)
-            self.goto('meeting_detail')
-    
-    def on_start_new(self, instance):
-        self.app.start_recording()
+        if self._auto_event:
+            self._auto_event.cancel()
+            self._auto_event = None
+
+    def on_touch_down(self, touch):
+        # Tap anywhere to skip back to home
+        if self.collide_point(*touch.pos):
+            self._go_home(0)
+            return True
+        return super().on_touch_down(touch)
+
+    def _go_home(self, _dt):
+        if self._auto_event:
+            self._auto_event.cancel()
+            self._auto_event = None
+        self.goto('home', transition='fade')

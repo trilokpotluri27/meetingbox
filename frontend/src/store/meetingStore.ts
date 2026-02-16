@@ -44,9 +44,9 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     }
   },
 
-  stopRecording: async (sessionId?: string) => {
+  stopRecording: async () => {
     try {
-      await meetingsApi.stop(sessionId)
+      await meetingsApi.stop()
       // Refresh meetings list after stopping
       get().fetchMeetings()
     } catch (error) {

@@ -1,7 +1,7 @@
 """
-System Info Screen
+System Info Screen – Dark themed (480 × 320)
 
-Landscape: info left, update button right.
+Displays system information with update button.
 """
 
 from kivy.uix.boxlayout import BoxLayout
@@ -17,117 +17,97 @@ from config import COLORS, FONT_SIZES, SPACING
 
 
 class SystemScreen(BaseScreen):
-    """System info — landscape 480x320."""
-    
+    """System info – dark theme."""
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.system_info = {}
-        self.build_ui()
-    
-    def build_ui(self):
-        layout = BoxLayout(orientation='vertical')
-        
+        self._build_ui()
+
+    def _build_ui(self):
+        root = BoxLayout(orientation='vertical')
+        self.make_dark_bg(root)
+
         self.status_bar = StatusBar(
-            status_text='<- BACK',
+            status_text='System',
             device_name='System',
             back_button=True,
-            on_back=self.go_back
+            on_back=self.go_back,
+            show_settings=False,
         )
-        layout.add_widget(self.status_bar)
-        
-        # Horizontal: info left, update btn right
+        root.add_widget(self.status_bar)
+
         content = BoxLayout(
             orientation='horizontal',
             padding=SPACING['screen_padding'],
-            spacing=SPACING['section_spacing']
+            spacing=SPACING['section_spacing'],
         )
-        
-        # Left: scrollable info
-        scroll = ScrollView(size_hint=(0.65, 1))
+
+        scroll = ScrollView(size_hint=(0.65, 1), do_scroll_x=False)
         self.info_label = Label(
-            text='Loading...',
+            text='Loading…',
             font_size=FONT_SIZES['small'],
             size_hint_y=None,
-            color=COLORS['gray_700'],
-            halign='left', valign='top'
+            color=COLORS['gray_400'],
+            halign='left', valign='top',
         )
         self.info_label.bind(texture_size=self.info_label.setter('size'))
         self.info_label.bind(size=self.info_label.setter('text_size'))
         scroll.add_widget(self.info_label)
         content.add_widget(scroll)
-        
-        # Right: update button
-        right = BoxLayout(
-            orientation='vertical',
-            size_hint=(0.35, 1),
-            spacing=SPACING['button_spacing']
-        )
-        right.add_widget(Label(size_hint=(1, 0.5)))  # spacer
+
+        right = BoxLayout(orientation='vertical', size_hint=(0.35, 1),
+                          spacing=SPACING['button_spacing'])
+        from kivy.uix.widget import Widget
+        right.add_widget(Widget(size_hint=(1, 0.5)))
         self.update_btn = PrimaryButton(
-            text='CHECK\nUPDATES',
-            size_hint=(1, 0.4)
-        )
-        self.update_btn.bind(on_press=self.on_update_pressed)
+            text='CHECK\nUPDATES', size_hint=(1, 0.4))
+        self.update_btn.bind(on_press=self._on_update)
         right.add_widget(self.update_btn)
-        
         content.add_widget(right)
-        layout.add_widget(content)
-        self.add_widget(layout)
-    
+
+        root.add_widget(content)
+
+        footer = self.build_footer()
+        root.add_widget(footer)
+
+        self.add_widget(root)
+
     def on_enter(self):
-        self.load_system_info()
-    
-    def load_system_info(self):
+        self._load_info()
+
+    def _load_info(self):
         async def _load():
             try:
                 info = await self.backend.get_system_info()
                 self.system_info = info
-                Clock.schedule_once(lambda dt: self.populate_info(), 0)
-            except Exception as e:
-                print(f"Failed to load system info: {e}")
+                Clock.schedule_once(lambda _: self._populate(), 0)
+            except Exception:
+                pass
         run_async(_load())
-    
-    def populate_info(self):
+
+    def _populate(self):
         if not self.system_info:
             return
-        su = self.system_info.get('storage_used', 0) / (1024**3)
-        st = self.system_info.get('storage_total', 1) / (1024**3)
+        i = self.system_info
+        su = i.get('storage_used', 0) / (1024**3)
+        st = i.get('storage_total', 1) / (1024**3)
         sf = st - su
-        up_s = self.system_info.get('uptime', 0)
-        up_h = up_s // 3600
-        up_d = up_h // 24
-        sig = self.system_info.get('wifi_signal', 0)
-        bars = '|' * max(1, sig // 25)
-        
+        up_s = i.get('uptime', 0)
+        up_d = up_s // 86400
+        up_h = (up_s % 86400) // 3600
+        sig = i.get('wifi_signal', 0)
+        bars = '▂▄▆█'[:max(1, sig // 25)]
+
         self.info_label.text = (
-            f"Name: {self.system_info.get('device_name', '?')}\n"
-            f"IP: {self.system_info.get('ip_address', '?')}\n"
-            f"WiFi: {self.system_info.get('wifi_ssid', 'N/A')} {bars}\n"
+            f"Name: {i.get('device_name', '?')}\n"
+            f"IP: {i.get('ip_address', '?')}\n"
+            f"WiFi: {i.get('wifi_ssid', 'N/A')} {bars}\n"
             f"Storage: {su:.0f}/{st:.0f}GB ({sf:.0f}GB free)\n"
-            f"Meetings: {self.system_info.get('meetings_count', 0)}\n"
-            f"Firmware: {self.system_info.get('firmware_version', '?')}\n"
-            f"Uptime: {up_d}d {up_h % 24}h"
+            f"Meetings: {i.get('meetings_count', 0)}\n"
+            f"Firmware: {i.get('firmware_version', '?')}\n"
+            f"Uptime: {up_d}d {up_h}h"
         )
-    
-    def on_update_pressed(self, instance):
-        async def _check():
-            try:
-                self.update_btn.text = 'Checking...'
-                self.update_btn.disabled = True
-                result = await self.backend.check_for_updates()
-                if result.get('update_available'):
-                    v = result.get('latest_version')
-                    Clock.schedule_once(lambda dt: setattr(self.update_btn, 'text', f'Install {v}'), 0)
-                else:
-                    Clock.schedule_once(lambda dt: setattr(self.update_btn, 'text', 'Up to date'), 0)
-                    Clock.schedule_once(lambda dt: self._reset_update_button(), 2.0)
-            except Exception as e:
-                print(f"Check failed: {e}")
-                Clock.schedule_once(lambda dt: setattr(self.update_btn, 'text', 'Failed'), 0)
-                Clock.schedule_once(lambda dt: self._reset_update_button(), 2.0)
-            finally:
-                Clock.schedule_once(lambda dt: setattr(self.update_btn, 'disabled', False), 0)
-        run_async(_check())
-    
-    def _reset_update_button(self):
-        self.update_btn.text = 'CHECK\nUPDATES'
+
+    def _on_update(self, _inst):
+        self.goto('update_check', transition='slide_left')

@@ -1,121 +1,135 @@
 """
-Processing Screen
+Processing Screen – AI transcription / summary progress (480 × 320)
 
-Landscape layout: compact progress display.
+PRD §5.9 – Centred progress bar, meeting info, time estimate.
 """
 
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
+from kivy.uix.widget import Widget
 from kivy.uix.progressbar import ProgressBar
+from kivy.graphics import Color, Rectangle, RoundedRectangle
 
 from screens.base_screen import BaseScreen
-from components.button import SecondaryButton
 from components.status_bar import StatusBar
-from config import COLORS, FONT_SIZES, SPACING
+from config import COLORS, FONT_SIZES, SPACING, BORDER_RADIUS
 
 
 class ProcessingScreen(BaseScreen):
-    """Processing screen — landscape 480x320."""
-    
+    """Processing screen – PRD §5.9."""
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.build_ui()
-    
-    def build_ui(self):
-        layout = BoxLayout(orientation='vertical')
-        
+        self._build_ui()
+
+    def _build_ui(self):
+        root = BoxLayout(orientation='vertical')
+        self.make_dark_bg(root)
+
+        # Status bar
         self.status_bar = StatusBar(
             status_text='PROCESSING',
             status_color=COLORS['yellow'],
-            device_name='Conference Room A'
+            device_name='Conference Room A',
+            show_settings=True,
         )
-        layout.add_widget(self.status_bar)
-        
-        # Horizontal: info left, dashboard btn right
-        content = BoxLayout(
-            orientation='horizontal',
-            padding=SPACING['screen_padding'],
-            spacing=SPACING['section_spacing']
-        )
-        
-        # Left: progress info
-        left = BoxLayout(
-            orientation='vertical',
-            size_hint=(0.65, 1),
-            spacing=SPACING['button_spacing']
-        )
-        
+        root.add_widget(self.status_bar)
+
+        root.add_widget(Widget(size_hint=(1, 0.08)))
+
+        # Status text
         self.status_label = Label(
-            text='Generating transcript...',
-            font_size=FONT_SIZES['large'],
-            size_hint=(1, 0.25),
-            color=COLORS['gray_900'],
-            halign='left'
+            text='Generating transcript and summary…',
+            font_size=FONT_SIZES['medium'],
+            color=COLORS['white'],
+            halign='center',
+            size_hint=(1, None), height=28,
         )
         self.status_label.bind(size=self.status_label.setter('text_size'))
-        left.add_widget(self.status_label)
-        
-        self.progress_bar = ProgressBar(max=100, value=0, size_hint=(1, 0.08))
-        left.add_widget(self.progress_bar)
-        
-        self.progress_label = Label(
+        root.add_widget(self.status_label)
+
+        root.add_widget(Widget(size_hint=(1, None), height=12))
+
+        # Progress bar row
+        pb_row = BoxLayout(
+            size_hint=(1, None), height=20,
+            padding=[40, 0],
+        )
+        self.progress_bar = ProgressBar(max=100, value=0, size_hint=(1, 1))
+        pb_row.add_widget(self.progress_bar)
+        root.add_widget(pb_row)
+
+        # Percentage
+        self.pct_label = Label(
             text='0%',
-            font_size=FONT_SIZES['medium'],
-            size_hint=(1, 0.15),
-            color=COLORS['gray_700']
-        )
-        left.add_widget(self.progress_label)
-        
-        self.meeting_info = Label(
-            text='Meeting: Untitled\nDuration: 0 min',
             font_size=FONT_SIZES['small'],
-            size_hint=(1, 0.25),
-            color=COLORS['gray_700'],
-            halign='left'
+            color=COLORS['gray_400'],
+            halign='center',
+            size_hint=(1, None), height=18,
         )
-        self.meeting_info.bind(size=self.meeting_info.setter('text_size'))
-        left.add_widget(self.meeting_info)
-        
-        self.time_estimate = Label(
-            text='This may take 2-3 minutes',
-            font_size=FONT_SIZES['tiny'],
-            size_hint=(1, 0.15),
+        root.add_widget(self.pct_label)
+
+        root.add_widget(Widget(size_hint=(1, None), height=12))
+
+        # Meeting info
+        self.meeting_label = Label(
+            text='Meeting: Untitled\nDuration: 0 minutes',
+            font_size=FONT_SIZES['small'] + 2,
             color=COLORS['gray_500'],
-            halign='left'
+            halign='center',
+            size_hint=(1, None), height=36,
         )
-        self.time_estimate.bind(size=self.time_estimate.setter('text_size'))
-        left.add_widget(self.time_estimate)
-        
-        content.add_widget(left)
-        
-        # Right: dashboard button
-        right = BoxLayout(
-            orientation='vertical',
-            size_hint=(0.35, 1),
-            spacing=SPACING['button_spacing']
+        self.meeting_label.bind(size=self.meeting_label.setter('text_size'))
+        root.add_widget(self.meeting_label)
+
+        # Time estimate
+        self.eta_label = Label(
+            text='Estimated time remaining: calculating…',
+            font_size=FONT_SIZES['small'],
+            color=COLORS['gray_500'],
+            halign='center',
+            size_hint=(1, None), height=20,
         )
-        right.add_widget(Label(size_hint=(1, 0.6)))  # spacer
-        
-        dashboard_btn = SecondaryButton(
-            text='VIEW ON\nDASHBOARD',
-            size_hint=(1, 0.4)
-        )
-        dashboard_btn.bind(on_press=self.on_dashboard_pressed)
-        right.add_widget(dashboard_btn)
-        
-        content.add_widget(right)
-        layout.add_widget(content)
-        self.add_widget(layout)
-    
+        self.eta_label.bind(size=self.eta_label.setter('text_size'))
+        root.add_widget(self.eta_label)
+
+        root.add_widget(Widget())
+
+        # Footer
+        footer = self.build_footer()
+        root.add_widget(footer)
+
+        self.add_widget(root)
+
+    # ------------------------------------------------------------------
+    # Backend events
+    # ------------------------------------------------------------------
     def on_processing_started(self, data):
         title = data.get('title', 'Untitled')
         dur = data.get('duration', 0) // 60
-        self.meeting_info.text = f"Meeting: {title}\nDuration: {dur} min"
-    
+        self.meeting_label.text = f'Meeting: {title}\nDuration: {dur} minutes'
+
     def on_progress_update(self, progress: int, status: str):
         self.progress_bar.value = progress
-        self.progress_label.text = f"{progress}%"
-        self.status_label.text = status
-    
-    def on_dashboard_pressed(self, instance):
+        self.pct_label.text = f'{progress}%'
+        if status:
+            self.status_label.text = status
+
+        # ETA formatting
+        eta = getattr(self, '_eta_seconds', None)
+        if eta and eta < 60:
+            self.eta_label.text = 'Estimated time remaining: less than 1 minute'
+        elif eta:
+            self.eta_label.text = f'Estimated time remaining: {eta // 60} minutes'
+
+    def set_eta(self, seconds: int):
+        self._eta_seconds = seconds
+
+    # Privacy
+    def on_enter(self):
+        privacy = getattr(self.app, 'privacy_mode', False)
+        if privacy:
+            self.status_bar.status_text = 'PROCESSING (Local)'
+
+    def on_dashboard_pressed(self, _inst):
         pass

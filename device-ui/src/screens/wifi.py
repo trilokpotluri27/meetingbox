@@ -1,7 +1,7 @@
 """
-WiFi Settings Screen
+WiFi Settings Screen – Dark themed (480 × 320)
 
-Landscape: compact network list.
+Compact network list with scan button.
 """
 
 from kivy.uix.boxlayout import BoxLayout
@@ -19,115 +19,99 @@ from config import COLORS, FONT_SIZES, SPACING
 
 
 class WiFiScreen(BaseScreen):
-    """WiFi settings — landscape 480x320."""
-    
+    """WiFi settings – dark theme."""
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.networks = []
-        self.build_ui()
-    
-    def build_ui(self):
-        layout = BoxLayout(orientation='vertical')
-        
+        self._build_ui()
+
+    def _build_ui(self):
+        root = BoxLayout(orientation='vertical')
+        self.make_dark_bg(root)
+
         self.status_bar = StatusBar(
-            status_text='<- BACK',
+            status_text='WiFi',
             device_name='WiFi',
             back_button=True,
-            on_back=self.go_back
+            on_back=self.go_back,
+            show_settings=False,
         )
-        layout.add_widget(self.status_bar)
-        
-        # Horizontal: network list left, scan button right
+        root.add_widget(self.status_bar)
+
         content = BoxLayout(
             orientation='horizontal',
             padding=SPACING['screen_padding'],
-            spacing=SPACING['section_spacing']
+            spacing=SPACING['section_spacing'],
         )
-        
-        # Left: current + networks
-        left = BoxLayout(
-            orientation='vertical',
-            size_hint=(0.7, 1),
-            spacing=SPACING['button_spacing']
-        )
-        
+
+        left = BoxLayout(orientation='vertical', size_hint=(0.7, 1), spacing=SPACING['button_spacing'])
+
         self.current_label = Label(
-            text='Current: Loading...',
-            font_size=FONT_SIZES['tiny'],
-            size_hint=(1, None), height=14,
-            color=COLORS['gray_700'], halign='left'
+            text='Current: Loading…',
+            font_size=FONT_SIZES['small'],
+            size_hint=(1, None), height=18,
+            color=COLORS['gray_400'], halign='left',
         )
         self.current_label.bind(size=self.current_label.setter('text_size'))
         left.add_widget(self.current_label)
-        
-        scroll = ScrollView(size_hint=(1, 1))
+
+        scroll = ScrollView(do_scroll_x=False)
         self.networks_container = GridLayout(
-            cols=1,
-            spacing=SPACING['list_item_spacing'],
-            size_hint_y=None
-        )
-        self.networks_container.bind(minimum_height=self.networks_container.setter('height'))
+            cols=1, spacing=SPACING['list_item_spacing'], size_hint_y=None)
+        self.networks_container.bind(
+            minimum_height=self.networks_container.setter('height'))
         scroll.add_widget(self.networks_container)
         left.add_widget(scroll)
-        
+
         content.add_widget(left)
-        
-        # Right: scan button
-        right = BoxLayout(
-            orientation='vertical',
-            size_hint=(0.3, 1),
-            spacing=SPACING['button_spacing']
-        )
-        right.add_widget(Label(size_hint=(1, 0.6)))  # spacer
+
+        right = BoxLayout(orientation='vertical', size_hint=(0.3, 1),
+                          spacing=SPACING['button_spacing'])
+        from kivy.uix.widget import Widget
+        right.add_widget(Widget(size_hint=(1, 0.6)))
         scan_btn = SecondaryButton(text='SCAN', size_hint=(1, 0.35))
-        scan_btn.bind(on_press=self.on_scan_pressed)
+        scan_btn.bind(on_press=lambda _: self._load_networks())
         right.add_widget(scan_btn)
-        
         content.add_widget(right)
-        layout.add_widget(content)
-        self.add_widget(layout)
-    
+
+        root.add_widget(content)
+
+        footer = self.build_footer()
+        root.add_widget(footer)
+
+        self.add_widget(root)
+
     def on_enter(self):
-        self.load_networks()
-    
-    def load_networks(self):
+        self._load_networks()
+
+    def _load_networks(self):
         async def _load():
             try:
-                networks = await self.backend.get_wifi_networks()
-                self.networks = networks
-                Clock.schedule_once(lambda dt: self.populate_networks(), 0)
-            except Exception as e:
-                print(f"Failed to load WiFi networks: {e}")
+                nets = await self.backend.get_wifi_networks()
+                self.networks = nets
+                Clock.schedule_once(lambda _: self._populate(), 0)
+            except Exception:
+                pass
         run_async(_load())
-    
-    def populate_networks(self):
+
+    def _populate(self):
         self.networks_container.clear_widgets()
         current = next((n for n in self.networks if n.get('connected')), None)
-        if current:
-            self.current_label.text = f"Current: {current['ssid']}"
-        else:
-            self.current_label.text = "Not connected"
-        
-        for network in self.networks:
-            item = WiFiNetworkItem(network=network)
-            item.bind(on_press=self.on_network_pressed)
+        self.current_label.text = f"Current: {current['ssid']}" if current else 'Not connected'
+        for net in self.networks:
+            item = WiFiNetworkItem(network=net)
+            item.bind(on_press=self._on_network)
             self.networks_container.add_widget(item)
-    
-    def on_network_pressed(self, instance):
-        network = instance.network
-        if network.get('connected'):
+
+    def _on_network(self, instance):
+        if instance.network.get('connected'):
             return
-        self.connect_to_network(network['ssid'])
-    
-    def connect_to_network(self, ssid: str, password: str = None):
         async def _connect():
             try:
-                result = await self.backend.connect_wifi(ssid, password)
+                result = await self.backend.connect_wifi(instance.network['ssid'])
                 if result.get('status') == 'connected':
-                    Clock.schedule_once(lambda dt: self.load_networks(), 0)
-            except Exception as e:
-                print(f"Failed to connect to {ssid}: {e}")
+                    Clock.schedule_once(lambda _: self._load_networks(), 0)
+            except Exception:
+                pass
         run_async(_connect())
-    
-    def on_scan_pressed(self, instance):
-        self.load_networks()

@@ -63,7 +63,7 @@ export default function LiveRecording() {
   const handleStop = async () => {
     setIsStopping(true)
     try {
-      await meetingsApi.stop(sessionId ?? undefined)
+      await meetingsApi.stop()
       toast.success('Recording stopped — processing...')
       navigate('/dashboard')
     } catch {

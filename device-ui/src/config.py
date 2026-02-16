@@ -2,6 +2,7 @@
 MeetingBox Device UI Configuration
 
 Configure display, backend connection, and UI preferences.
+Based on PRD v1.0 – Apple-inspired premium dark theme.
 """
 
 import os
@@ -35,12 +36,9 @@ DISPLAY_WIDTH = int(os.getenv('DISPLAY_WIDTH', '480'))
 DISPLAY_HEIGHT = int(os.getenv('DISPLAY_HEIGHT', '320'))
 
 # Display orientation
-# Options: 'portrait', 'landscape'
 DISPLAY_ORIENTATION = os.getenv('DISPLAY_ORIENTATION', 'landscape')
 
-# Framerate (FPS)
-# Lower FPS saves CPU on Raspberry Pi
-# 30 FPS = smooth, 20 FPS = acceptable, 15 FPS = choppy
+# Framerate
 TARGET_FPS = int(os.getenv('TARGET_FPS', '30'))
 
 # Fullscreen mode
@@ -50,61 +48,49 @@ FULLSCREEN = os.getenv('FULLSCREEN', '1') == '1'
 # TOUCH SETTINGS
 # ============================================================================
 
-# Touch device path (auto-detect if None)
 TOUCH_DEVICE = os.getenv('TOUCH_DEVICE', None)
-
-# Touch calibration (if needed)
-# Format: "x_min x_max y_min y_max"
 TOUCH_CALIBRATION = os.getenv('TOUCH_CALIBRATION', None)
-
-# Double-tap time window (milliseconds)
 DOUBLE_TAP_TIME = 400
-
-# Long-press duration (milliseconds)
 LONG_PRESS_TIME = 1000
 
 # ============================================================================
-# UI THEME
+# UI THEME – Apple-inspired premium dark
 # ============================================================================
 
-# Color palette – Apple-inspired premium dark theme (RGBA 0-1)
 COLORS = {
     # Primary (blue gradient endpoints)
     'primary_start': (0.22, 0.55, 0.98, 1),    # #3888FA  bright blue
-    'primary_end': (0.13, 0.45, 0.96, 1),      # #2273F5  deep blue
-    'primary_text': (1, 1, 1, 1),
+    'primary_end': (0.13, 0.45, 0.96, 1),       # #2273F5  deep blue
 
     # iOS-style status colours
     'green': (0.20, 0.78, 0.35, 1),             # #34C759
     'red': (1.0, 0.27, 0.23, 1),                # #FF453A
-    'yellow': (1.0, 0.80, 0.0, 1),              # #FFD60A
-    'blue': (0.04, 0.52, 1.0, 1),               # #0A84FF
-
-    # Blue variants (backward compat)
-    'blue_50': (0.94, 0.95, 1.0, 1),            # #EFF6FF
+    'yellow': (1.0, 0.84, 0.04, 1),             # #FFD60A
+    'blue': (0.22, 0.53, 0.98, 1),              # #3888FA
 
     # Surfaces
     'background': (0.11, 0.11, 0.12, 1),        # #1C1C1E  dark bg
     'surface': (0.17, 0.17, 0.18, 1),           # #2C2C2E  elevated
     'surface_light': (0.22, 0.22, 0.23, 1),     # #38383A  card bg
+    'black': (0, 0, 0, 1),
 
     # Neutrals
     'white': (1, 1, 1, 1),
-    'gray_50': (0.98, 0.98, 0.99, 1),
-    'gray_100': (0.96, 0.96, 0.97, 1),
-    'gray_200': (0.92, 0.92, 0.93, 1),
     'gray_300': (0.78, 0.78, 0.80, 1),          # #C7C7CC
     'gray_400': (0.68, 0.68, 0.70, 1),          # #AEAEB2
     'gray_500': (0.56, 0.56, 0.58, 1),          # #8E8E93
     'gray_600': (0.44, 0.44, 0.46, 1),          # #6E6E73
     'gray_700': (0.33, 0.33, 0.35, 1),          # #545458
     'gray_800': (0.23, 0.23, 0.24, 1),          # #3A3A3C
-    'gray_900': (0.11, 0.11, 0.12, 1),          # #1C1C1E
-    'black': (0, 0, 0, 1),
 
-    # Shadows
+    # Shadows / overlays
     'shadow': (0, 0, 0, 0.30),
     'shadow_light': (0, 0, 0, 0.15),
+    'overlay': (0, 0, 0, 0.50),
+    'overlay_red': (0.3, 0, 0, 0.50),
+
+    # Border
+    'border': (1, 1, 1, 0.10),
 
     # Transparent
     'transparent': (0, 0, 0, 0),
@@ -112,18 +98,20 @@ COLORS = {
 
 # Premium typography (SF Pro-like sizing)
 FONT_SIZES = {
-    'huge': 32,
-    'large': 22,
-    'medium': 17,     # iOS standard body
-    'small': 13,
-    'tiny': 11,
+    'huge': 32,     # timer, large numbers
+    'large': 22,    # titles, primary buttons
+    'title': 20,    # settings title
+    'medium': 17,   # body text, standard buttons
+    'body': 16,     # regular body text
+    'small': 13,    # secondary text, captions
+    'tiny': 11,     # footer, helper text
 }
 
 # Button sizes (width, height in pixels)
 BUTTON_SIZES = {
-    'primary': (180, 60),
-    'secondary': (120, 45),
-    'small': (100, 40),
+    'primary': (240, 60),
+    'secondary': (180, 60),
+    'small': (140, 50),
 }
 
 # Apple-like spacing
@@ -137,19 +125,40 @@ SPACING = {
 # More rounded corners (Apple style)
 BORDER_RADIUS = 14
 
+# Layout constants
+STATUS_BAR_HEIGHT = 44
+FOOTER_HEIGHT = 20
+CONTENT_PADDING_H = 16
+CONTENT_PADDING_V = 12
+
 # ============================================================================
-# ANIMATIONS
+# ANIMATIONS & TRANSITIONS
 # ============================================================================
 
-# Enable animations (disable to save CPU)
 ENABLE_ANIMATIONS = True
 
-# Animation durations (seconds)
 ANIMATION_DURATION = {
     'fast': 0.15,
     'normal': 0.3,
     'slow': 0.5,
 }
+
+# Screen transition durations (seconds)
+TRANSITION_DURATION = {
+    'fade': 0.3,
+    'slide': 0.3,
+    'fade_slow': 0.5,
+}
+
+# ============================================================================
+# BOOT FLOW
+# ============================================================================
+
+# Splash screen duration (seconds)
+SPLASH_DURATION = 2.0
+
+# "You're All Set" screen duration (seconds)
+ALL_SET_DURATION = 3.0
 
 # ============================================================================
 # FEATURES
@@ -162,40 +171,55 @@ ENABLE_LIVE_CAPTIONS = True
 LIVE_CAPTION_UPDATE_INTERVAL = 2
 
 # Auto-return to home after processing complete (seconds)
-AUTO_RETURN_DELAY = 10
+AUTO_RETURN_DELAY = 5
 
 # Number of recent meetings to show in list
 MEETINGS_LIST_LIMIT = 20
 
-# Enable haptic feedback (if hardware supports)
+# Enable haptic feedback
 ENABLE_HAPTIC = False
+
+# ============================================================================
+# PRIVACY MODE
+# ============================================================================
+
+# Default privacy mode state (can be changed in settings)
+DEFAULT_PRIVACY_MODE = False
+
+# ============================================================================
+# SCREEN SETTINGS (adjustable in device settings)
+# ============================================================================
+
+DEFAULT_BRIGHTNESS = 'high'        # low, medium, high
+DEFAULT_SCREEN_TIMEOUT = 'never'   # never, 5min, 10min
+DEFAULT_AUTO_DELETE = 'never'       # never, 30, 60, 90
+
+# ============================================================================
+# DEVICE INFO
+# ============================================================================
+
+DEVICE_MODEL = 'MeetingBox v1.0'
+HOTSPOT_SSID_PREFIX = 'MeetingBox-'
+SETUP_URL = 'meetingbox.setup'
+DASHBOARD_URL = 'meetingbox.local'
 
 # ============================================================================
 # LOGGING
 # ============================================================================
 
-# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
-
-# Log file path
 LOG_FILE = os.getenv('LOG_FILE', '/var/log/meetingbox-ui.log')
-
-# Log to console as well
 LOG_TO_CONSOLE = os.getenv('LOG_TO_CONSOLE', '1') == '1'
 
 # ============================================================================
 # PATHS
 # ============================================================================
 
-# Base directory
 BASE_DIR = Path(__file__).parent.parent.resolve()
-
-# Assets directory
 ASSETS_DIR = BASE_DIR / 'assets'
 FONTS_DIR = ASSETS_DIR / 'fonts'
 ICONS_DIR = ASSETS_DIR / 'icons'
 
-# Ensure directories exist
 ASSETS_DIR.mkdir(exist_ok=True)
 FONTS_DIR.mkdir(exist_ok=True)
 ICONS_DIR.mkdir(exist_ok=True)
@@ -204,11 +228,6 @@ ICONS_DIR.mkdir(exist_ok=True)
 # DEVELOPMENT
 # ============================================================================
 
-# Development mode (enables debug features)
 DEV_MODE = os.getenv('DEV_MODE', '0') == '1'
-
-# Show FPS counter
 SHOW_FPS = DEV_MODE or os.getenv('SHOW_FPS', '0') == '1'
-
-# Enable debug borders on widgets
 DEBUG_BORDERS = DEV_MODE and os.getenv('DEBUG_BORDERS', '0') == '1'

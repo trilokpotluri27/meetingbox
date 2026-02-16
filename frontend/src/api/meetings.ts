@@ -27,12 +27,20 @@ export const meetingsApi = {
   },
 
   // Stop recording
-  stop: async (sessionId?: string): Promise<{ status: string }> => {
-    if (sessionId) {
-      const response = await client.post(`/api/meetings/${sessionId}/stop`)
-      return response.data
-    }
+  stop: async (): Promise<{ status: string }> => {
     const response = await client.post('/api/meetings/stop')
+    return response.data
+  },
+
+  // Pause recording
+  pause: async (): Promise<{ status: string }> => {
+    const response = await client.post('/api/meetings/pause')
+    return response.data
+  },
+
+  // Resume recording
+  resume: async (): Promise<{ status: string }> => {
+    const response = await client.post('/api/meetings/resume')
     return response.data
   },
 

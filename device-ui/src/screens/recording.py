@@ -1,185 +1,324 @@
 """
-Recording Screen
+Recording Screen – Active recording interface (480 × 320)
 
-Landscape layout: Timer + controls left, live captions right.
+PRD §5.7 – Timer, audio waveform, live captions, pause/stop.
+
+Layout (top → bottom):
+┌──────────────────────────────────────────────────┐
+│ 🔴 RECORDING             Conference Room A     ⚙ │ 44 px
+├──────────────────────────────────────────────────┤
+│                    00:23:47                       │ 36 px
+├──────────────────────────────────────────────────┤
+│     ▂ ▄ ▆ █ ▇ ▅ ▃ ▂ ▁ ▃ ▅ ▇ █ ▆ ▄ ▂            │ 60 px
+├──────────────────────────────────────────────────┤
+│ ┌────────────────────────────────────────────┐   │
+│ │ "…so I think we should focus on Q4…"       │   │ 70 px
+│ └────────────────────────────────────────────┘   │
+├──────────────────────────────────────────────────┤
+│    ┌──────────┐            ┌──────────┐          │ 60 px
+│    │ ⏸ PAUSE │            │ ⏹ STOP │          │
+├──────────────────────────────────────────────────┤
+│ WiFi: ✓  Storage: 454GB free | …                 │ 20 px
+└──────────────────────────────────────────────────┘
 """
 
+import random
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
-from kivy.uix.scrollview import ScrollView
+from kivy.uix.widget import Widget
+from kivy.graphics import Color, RoundedRectangle, Rectangle
 from kivy.clock import Clock
 
 from screens.base_screen import BaseScreen
 from components.button import SecondaryButton, DangerButton
 from components.status_bar import StatusBar
-from config import COLORS, FONT_SIZES, SPACING
+from components.modal_dialog import ModalDialog
+from config import COLORS, FONT_SIZES, SPACING, BORDER_RADIUS
+from async_helper import run_async
+
+
+class _WaveformWidget(Widget):
+    """Simple vertical-bar audio waveform visualisation."""
+
+    NUM_BARS = 18
+    BAR_WIDTH = 14
+    BAR_SPACING = 6
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault('size_hint', (1, None))
+        kwargs.setdefault('height', 60)
+        super().__init__(**kwargs)
+        self._levels = [2] * self.NUM_BARS
+        self._active = False
+        self.bind(pos=self._draw, size=self._draw)
+
+    def set_active(self, active: bool):
+        self._active = active
+
+    def update_levels(self, levels=None):
+        if levels:
+            self._levels = levels
+        elif self._active:
+            self._levels = [random.randint(4, 55) for _ in range(self.NUM_BARS)]
+        else:
+            self._levels = [2] * self.NUM_BARS
+        self._draw()
+
+    def _draw(self, *_args):
+        self.canvas.clear()
+        total_w = self.NUM_BARS * (self.BAR_WIDTH + self.BAR_SPACING)
+        start_x = self.x + (self.width - total_w) / 2
+        base_y = self.y + 2
+
+        with self.canvas:
+            for i, h in enumerate(self._levels):
+                ratio = h / 60.0
+                r = 0.22 + ratio * (0.20 - 0.22)
+                g = 0.55 + ratio * (0.78 - 0.55)
+                b = 0.98 + ratio * (0.35 - 0.98)
+                Color(r, g, b, 1)
+                bx = start_x + i * (self.BAR_WIDTH + self.BAR_SPACING)
+                RoundedRectangle(
+                    pos=(bx, base_y),
+                    size=(self.BAR_WIDTH, max(2, h)),
+                    radius=[3],
+                )
 
 
 class RecordingScreen(BaseScreen):
-    """
-    Recording screen — landscape 480x320.
-    
-    Left:  Timer, speaker count, pause/stop buttons
-    Right: Live caption scroll area
-    """
-    
+    """Active recording screen – PRD §5.7 / §5.8 (paused state inline)."""
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.elapsed_seconds = 0
         self.timer_event = None
+        self.waveform_event = None
         self.transcript_lines = []
-        self.build_ui()
-    
-    def build_ui(self):
-        layout = BoxLayout(orientation='vertical')
-        
-        # Thin status bar
+        self._is_paused = False
+        self._build_ui()
+
+    def _build_ui(self):
+        root = BoxLayout(orientation='vertical')
+        self.make_dark_bg(root)
+
+        # 1. Status bar
         self.status_bar = StatusBar(
             status_text='RECORDING',
             status_color=COLORS['red'],
             device_name='Conference Room A',
-            pulsing=True
+            pulsing=True,
+            show_settings=True,
         )
-        layout.add_widget(self.status_bar)
-        
-        # Horizontal split
-        content = BoxLayout(
-            orientation='horizontal',
-            padding=SPACING['screen_padding'],
-            spacing=SPACING['section_spacing']
-        )
-        
-        # LEFT: Timer + controls
-        left = BoxLayout(
-            orientation='vertical',
-            size_hint=(0.4, 1),
-            spacing=SPACING['button_spacing']
-        )
-        
+        root.add_widget(self.status_bar)
+
+        # 2. Timer
         self.timer_label = Label(
             text='00:00',
-            font_size=FONT_SIZES['huge'],
-            size_hint=(1, 0.3),
-            color=COLORS['gray_900'],
-            bold=True
+            font_size=28,
+            bold=True,
+            color=COLORS['white'],
+            halign='center',
+            size_hint=(1, None), height=36,
         )
-        left.add_widget(self.timer_label)
-        
-        self.speaker_label = Label(
-            text='0 speakers',
-            font_size=FONT_SIZES['tiny'],
-            size_hint=(1, 0.1),
-            color=COLORS['gray_700']
-        )
-        left.add_widget(self.speaker_label)
-        
-        self.pause_btn = SecondaryButton(
-            text='PAUSE',
-            size_hint=(1, 0.25)
-        )
-        self.pause_btn.bind(on_press=self.on_pause_pressed)
-        left.add_widget(self.pause_btn)
-        
-        self.stop_btn = DangerButton(
-            text='STOP',
-            size_hint=(1, 0.3)
-        )
-        self.stop_btn.bind(on_press=self.on_stop_pressed)
-        left.add_widget(self.stop_btn)
-        
-        content.add_widget(left)
-        
-        # RIGHT: Live captions
-        right = BoxLayout(
+        root.add_widget(self.timer_label)
+
+        # 3. Waveform
+        self.waveform = _WaveformWidget()
+        root.add_widget(self.waveform)
+
+        # 4. Live captions card
+        caption_card = BoxLayout(
             orientation='vertical',
-            size_hint=(0.6, 1),
-            spacing=2
+            size_hint=(1, None), height=70,
+            padding=[SPACING['screen_padding'], 4],
         )
-        
-        caption_header = Label(
-            text='Live Caption:',
-            font_size=FONT_SIZES['tiny'],
-            size_hint=(1, None),
-            height=14,
-            color=COLORS['gray_600'],
-            halign='left'
+        with caption_card.canvas.before:
+            Color(*COLORS['surface'])
+            _cb = RoundedRectangle(
+                pos=caption_card.pos, size=caption_card.size,
+                radius=[BORDER_RADIUS])
+        caption_card.bind(
+            pos=lambda w, v: setattr(_cb, 'pos', w.pos),
+            size=lambda w, v: setattr(_cb, 'size', w.size),
         )
-        caption_header.bind(size=caption_header.setter('text_size'))
-        right.add_widget(caption_header)
-        
-        scroll = ScrollView(size_hint=(1, 1))
-        self.transcript_label = Label(
-            text='Waiting for speech...',
-            font_size=FONT_SIZES['small'],
-            size_hint_y=None,
-            color=COLORS['gray_700'],
+        self.caption_label = Label(
+            text='Waiting for speech…',
+            font_size=14,
+            color=COLORS['white'],
             halign='left',
-            valign='top'
+            valign='top',
+            line_height=1.4,
         )
-        self.transcript_label.bind(texture_size=self.transcript_label.setter('size'))
-        scroll.add_widget(self.transcript_label)
-        right.add_widget(scroll)
-        
-        content.add_widget(right)
-        layout.add_widget(content)
-        self.add_widget(layout)
-    
+        self.caption_label.bind(size=self.caption_label.setter('text_size'))
+        caption_card.add_widget(self.caption_label)
+        root.add_widget(caption_card)
+
+        # 5. Buttons row
+        btn_row = BoxLayout(
+            orientation='horizontal',
+            size_hint=(1, None), height=60,
+            padding=[SPACING['screen_padding'], 4],
+            spacing=SPACING['button_spacing'] * 3,
+        )
+
+        self.pause_btn = SecondaryButton(
+            text='⏸  PAUSE',
+            font_size=FONT_SIZES['medium'],
+            size_hint=(0.5, 1),
+        )
+        self.pause_btn.bind(on_press=self._on_pause)
+        btn_row.add_widget(self.pause_btn)
+
+        self.stop_btn = DangerButton(
+            text='⏹  STOP',
+            font_size=FONT_SIZES['medium'],
+            size_hint=(0.5, 1),
+        )
+        self.stop_btn.bind(on_press=self._on_stop)
+        btn_row.add_widget(self.stop_btn)
+
+        root.add_widget(btn_row)
+
+        # 6. Footer
+        footer = self.build_footer()
+        root.add_widget(footer)
+
+        self.add_widget(root)
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
     def on_enter(self):
+        self._is_paused = False
         self.elapsed_seconds = 0
-        self.timer_event = Clock.schedule_interval(self.update_timer, 1.0)
         self.transcript_lines = []
-        self.transcript_label.text = 'Waiting for speech...'
-    
+        self.caption_label.text = 'Waiting for speech…'
+        self.timer_label.text = '00:00'
+        self.waveform.set_active(True)
+
+        self.timer_event = Clock.schedule_interval(self._tick_timer, 1.0)
+        self.waveform_event = Clock.schedule_interval(
+            lambda _dt: self.waveform.update_levels(), 0.1)
+
+        self.status_bar.status_text = 'RECORDING'
+        self.status_bar.status_color = COLORS['red']
+        self.status_bar.start_pulse()
+        self.pause_btn.text = '⏸  PAUSE'
+
+        self._apply_privacy_mode()
+        self._load_footer_data()
+
     def on_leave(self):
         if self.timer_event:
             self.timer_event.cancel()
             self.timer_event = None
-    
-    def update_timer(self, dt):
+        if self.waveform_event:
+            self.waveform_event.cancel()
+            self.waveform_event = None
+
+    # ------------------------------------------------------------------
+    # Timer
+    # ------------------------------------------------------------------
+    def _tick_timer(self, _dt):
         self.elapsed_seconds += 1
-        hours = self.elapsed_seconds // 3600
-        minutes = (self.elapsed_seconds % 3600) // 60
-        seconds = self.elapsed_seconds % 60
-        if hours > 0:
-            self.timer_label.text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        h = self.elapsed_seconds // 3600
+        m = (self.elapsed_seconds % 3600) // 60
+        s = self.elapsed_seconds % 60
+        if h > 0:
+            self.timer_label.text = f'{h:02d}:{m:02d}:{s:02d}'
         else:
-            self.timer_label.text = f"{minutes:02d}:{seconds:02d}"
-    
-    def on_pause_pressed(self, instance):
-        if self.app.recording_state['paused']:
+            self.timer_label.text = f'{m:02d}:{s:02d}'
+
+    # ------------------------------------------------------------------
+    # Pause / Resume
+    # ------------------------------------------------------------------
+    def _on_pause(self, _inst):
+        if self._is_paused:
             self.app.resume_recording()
         else:
             self.app.pause_recording()
-    
+
     def on_paused(self):
-        self.pause_btn.text = 'RESUME'
+        self._is_paused = True
+        self.pause_btn.text = '▶  RESUME'
         self.status_bar.status_text = 'PAUSED'
         self.status_bar.status_color = COLORS['yellow']
+        self.status_bar.stop_pulse()
+
         if self.timer_event:
             self.timer_event.cancel()
-    
+            self.timer_event = None
+
+        self.waveform.set_active(False)
+        self.waveform.update_levels()
+        self.caption_label.text = 'Recording paused'
+
     def on_resumed(self):
-        self.pause_btn.text = 'PAUSE'
+        self._is_paused = False
+        self.pause_btn.text = '⏸  PAUSE'
         self.status_bar.status_text = 'RECORDING'
         self.status_bar.status_color = COLORS['red']
-        self.timer_event = Clock.schedule_interval(self.update_timer, 1.0)
-    
-    def on_stop_pressed(self, instance):
+        self.status_bar.start_pulse()
+
+        self.timer_event = Clock.schedule_interval(self._tick_timer, 1.0)
+        self.waveform.set_active(True)
+
+    # ------------------------------------------------------------------
+    # Stop (with confirmation dialog)
+    # ------------------------------------------------------------------
+    def _on_stop(self, _inst):
+        dur = self.timer_label.text
+        dialog = ModalDialog(
+            title='Stop Recording?',
+            message=f'Meeting: {dur}',
+            confirm_text='STOP',
+            cancel_text='CANCEL',
+            danger=True,
+            on_confirm=self._do_stop,
+        )
+        self.add_widget(dialog)
+
+    def _do_stop(self):
         self.app.stop_recording()
-    
+
+    # ------------------------------------------------------------------
+    # Transcription updates
+    # ------------------------------------------------------------------
     def on_transcription_update(self, text: str, speaker_id: str = None):
+        if self._is_paused:
+            return
         if speaker_id:
-            line = f"S{speaker_id}: {text}"
+            line = f'S{speaker_id}: {text}'
         else:
             line = text
         self.transcript_lines.append(line)
-        if len(self.transcript_lines) > 10:
-            self.transcript_lines = self.transcript_lines[-10:]
-        self.transcript_label.text = '\n'.join(self.transcript_lines)
-        
-        speakers = set()
-        for ln in self.transcript_lines:
-            if ln.startswith('S') and ':' in ln:
-                speakers.add(ln.split(':')[0].strip())
-        if speakers:
-            self.speaker_label.text = f"{len(speakers)} speaker{'s' if len(speakers) > 1 else ''}"
+        if len(self.transcript_lines) > 4:
+            self.transcript_lines = self.transcript_lines[-4:]
+        self.caption_label.text = '\n'.join(self.transcript_lines)
+
+    # ------------------------------------------------------------------
+    # Privacy
+    # ------------------------------------------------------------------
+    def _apply_privacy_mode(self):
+        privacy = getattr(self.app, 'privacy_mode', False)
+        if privacy:
+            self.status_bar.status_text = 'RECORDING (Privacy)'
+            self.caption_label.text = (
+                'Privacy Mode: Processing locally only\n'
+                'AI summaries disabled')
+
+    # ------------------------------------------------------------------
+    def _load_footer_data(self):
+        async def _fetch():
+            try:
+                info = await self.backend.get_system_info()
+                free_gb = (info['storage_total'] - info['storage_used']) / (1024 ** 3)
+                wifi_ok = bool(info.get('wifi_ssid'))
+                privacy = getattr(self.app, 'privacy_mode', False)
+                Clock.schedule_once(
+                    lambda _dt: self.update_footer(
+                        wifi_ok=wifi_ok, free_gb=free_gb,
+                        privacy_mode=privacy), 0)
+            except Exception:
+                pass
+        run_async(_fetch())
