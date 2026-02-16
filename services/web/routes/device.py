@@ -152,10 +152,13 @@ async def update_settings(body: SettingsUpdate):
         return {"status": "restarting"}
 
     if action == "factory_reset":
-        # Delete settings, DB, and reboot
+        # Delete settings and setup marker, then reboot
         try:
             SETTINGS_FILE.unlink(missing_ok=True)
-            Path("/opt/meetingbox/.setup_complete").unlink(missing_ok=True)
+            # Remove setup marker from shared config volume
+            for p in ["/data/config/.setup_complete",
+                      "/opt/meetingbox/.setup_complete"]:
+                Path(p).unlink(missing_ok=True)
             subprocess.Popen(["sudo", "reboot"], close_fds=True)
         except Exception:
             pass

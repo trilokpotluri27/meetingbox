@@ -92,7 +92,12 @@ services:
     networks:
       - meetingbox-net
 
-  # ── Device UI (OLED touchscreen) ──────────────────────────────────
+  # ================================================================
+  # Device UI — Kivy touchscreen interface
+  # ================================================================
+  # Renders directly to the attached display via X11 passthrough.
+  # Requires: X server running on the host (startx / lightdm).
+  # ================================================================
   device-ui:
     build:
       context: ./device-ui
@@ -100,34 +105,37 @@ services:
     restart: unless-stopped
     depends_on:
       - web
+      - redis
     environment:
       - PYTHONUNBUFFERED=1
-      - DISPLAY=${DISPLAY:-:0}
+      # Point to the web service inside the Docker network
       - BACKEND_URL=http://web:8000
       - BACKEND_WS_URL=ws://web:8000/ws
+      # Display: use the host X server
+      - DISPLAY=${DISPLAY:-:0}
+      # Kivy settings
+      - KIVY_WINDOW=sdl2
       - KIVY_NO_CONSOLELOG=1
-      - FULLSCREEN=${FULLSCREEN:-1}
-      - DISPLAY_WIDTH=${DISPLAY_WIDTH:-480}
-      - DISPLAY_HEIGHT=${DISPLAY_HEIGHT:-320}
-      # Set MOCK_BACKEND=1 in .env to test without real backend
-      - MOCK_BACKEND=${MOCK_BACKEND:-0}
+      # Production defaults
+      - FULLSCREEN=1
+      - MOCK_BACKEND=0
     volumes:
-      # X11 socket — lets Kivy render to the host display
+      # X11 socket — lets the container draw on the host display
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      # Shared device settings (persists across rebuilds)
+      # Persistent device config (settings, setup marker)
       - ./data/config:/data/config
-      # Touch input devices
-      - /run/udev:/run/udev:ro
-    # Device access for display + touch
+      # Share Xauthority so the container can authenticate with X
+      - ${XAUTHORITY:-/home/meetingbox/.Xauthority}:/home/uiuser/.Xauthority:ro
+    # Input & GPU device access for touchscreen + rendering
     devices:
-      - /dev/dri:/dev/dri             # GPU rendering
-      - /dev/input:/dev/input         # Touchscreen input
-    # Required for X11 + input device access
-    privileged: false
-    security_opt:
-      - seccomp:unconfined
+      - /dev/input:/dev/input     # Touchscreen & input devices
+      - /dev/dri:/dev/dri         # GPU (Mesa/DRM for OpenGL)
     networks:
       - meetingbox-net
+    # Needed for input device access
+    group_add:
+      - input
+      - video
 
 volumes:
   redis-data:

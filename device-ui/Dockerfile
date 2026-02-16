@@ -1,48 +1,58 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.11-slim
 
-# System dependencies for Kivy + SDL2 + X11 rendering
+# ---------------------------------------------------------------
+# System dependencies for Kivy GUI on Raspberry Pi (X11 backend)
+# ---------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    python3-dev \
+    # SDL2 (Kivy rendering backend)
     libsdl2-dev \
     libsdl2-image-dev \
     libsdl2-mixer-dev \
     libsdl2-ttf-dev \
+    # OpenGL
     libgl1-mesa-dev \
     libgles2-mesa-dev \
+    libegl1-mesa-dev \
+    # X11 client libs (to connect to the host X server)
+    libx11-dev \
+    libxext-dev \
+    libxrender-dev \
+    libxcursor-dev \
+    libxfixes-dev \
+    libxi-dev \
+    libxrandr-dev \
+    # GStreamer (Kivy media)
     libgstreamer1.0-dev \
+    gstreamer1.0-plugins-base \
+    # Input (touch)
     libmtdev1 \
     libinput-dev \
-    xclip \
-    xsel \
+    # Build tools
+    build-essential \
+    pkg-config \
+    # Misc
+    xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python dependencies first (layer caching)
+# Install Python deps first (better layer caching)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Create non-root user with video/input group access
-RUN useradd -m -s /bin/bash uiuser && \
-    usermod -aG video,input uiuser && \
-    mkdir -p /var/log && \
-    touch /var/log/meetingbox-ui.log && \
-    chown uiuser:uiuser /var/log/meetingbox-ui.log && \
-    mkdir -p /data/config && \
-    chown -R uiuser:uiuser /data/config
+# Create non-root user for security
+RUN useradd -m -s /bin/bash uiuser \
+    && chown -R uiuser:uiuser /app
+
+# Kivy config: use SDL2 window provider, disable console log
+ENV KIVY_WINDOW=sdl2
+ENV KIVY_NO_CONSOLELOG=1
+ENV KIVY_LOG_LEVEL=info
+ENV PYTHONUNBUFFERED=1
 
 USER uiuser
-
-# Kivy environment configuration
-ENV KIVY_NO_CONSOLELOG=1
-ENV KIVY_WINDOW=sdl2
-ENV KIVY_GL_BACKEND=sdl2
-ENV KIVY_TEXT=sdl2
-ENV KIVY_IMAGE=sdl2
 
 CMD ["python", "src/main.py"]

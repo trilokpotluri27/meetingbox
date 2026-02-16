@@ -204,8 +204,13 @@ class MeetingBoxApp(App):
     def needs_setup(self) -> bool:
         if USE_MOCK_BACKEND:
             return False
-        setup_marker = Path('/opt/meetingbox/.setup_complete')
-        return not setup_marker.exists()
+        # Check shared config volume (mounted at /data/config in Docker,
+        # falls back to /opt/meetingbox for bare-metal installs)
+        for marker_path in ['/data/config/.setup_complete',
+                            '/opt/meetingbox/.setup_complete']:
+            if Path(marker_path).exists():
+                return False
+        return True
 
     # ==================================================================
     # APP LIFECYCLE

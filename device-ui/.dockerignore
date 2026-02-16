@@ -1,6 +1,9 @@
-venv/
-__pycache__/
+__pycache__
 *.pyc
-.pytest_cache/
-.git/
-*.egg-info/
+.pytest_cache
+.git
+.gitignore
+venv/
+.venv/
+*.egg-info
+README.md
