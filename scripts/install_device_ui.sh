@@ -5,10 +5,9 @@
 # Installs everything via Docker. The device-ui, backend,
 # transcription, audio, and AI services all run as containers.
 #
-# The ONLY host-level setup needed is:
-#   1. Docker + Docker Compose
-#   2. X11 display server (for the touchscreen)
-#   3. xhost permission so the container can draw on the screen
+# Usage:
+#   cd /path/to/meetingbox-repo
+#   sudo bash scripts/install_device_ui.sh
 #
 # Tested on Raspberry Pi OS Bookworm (Debian 12)
 # ============================================================
@@ -27,13 +26,28 @@ fi
 
 # Get the actual user who called sudo
 ACTUAL_USER=${SUDO_USER:-$USER}
-ACTUAL_HOME=$(eval echo ~$ACTUAL_USER)
+ACTUAL_HOME=$(eval echo ~"$ACTUAL_USER")
 INSTALL_DIR="/opt/meetingbox"
 
-# -------------------------------------------------------
-# 1. System dependencies (minimal — just X11 & display)
-# -------------------------------------------------------
+# Detect where the script is run from (repo root)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+
+if [ ! -f "$REPO_DIR/docker-compose.yml" ]; then
+    echo "ERROR: Cannot find docker-compose.yml"
+    echo "Please run this script from the repo root:"
+    echo "  cd /path/to/meetingbox && sudo bash scripts/install_device_ui.sh"
+    exit 1
+fi
+
+echo "Repo:     $REPO_DIR"
+echo "Install:  $INSTALL_DIR"
+echo "User:     $ACTUAL_USER"
 echo ""
+
+# -------------------------------------------------------
+# 1. System dependencies (minimal — just X11, display, Docker)
+# -------------------------------------------------------
 echo "1/7  Installing system dependencies..."
 apt-get update
 apt-get install -y --no-install-recommends \
@@ -41,16 +55,34 @@ apt-get install -y --no-install-recommends \
     xinit \
     x11-xserver-utils \
     unclutter \
-    xdotool \
-    docker.io \
-    docker-compose-plugin \
-    git
+    curl \
+    rsync
+
+# Install Docker if not present
+if ! command -v docker &>/dev/null; then
+    echo "   Installing Docker..."
+    curl -fsSL https://get.docker.com | sh
+fi
+
+# Install Docker Compose plugin if not present
+if ! docker compose version &>/dev/null; then
+    echo "   Installing Docker Compose plugin..."
+    apt-get install -y docker-compose-plugin 2>/dev/null || {
+        # Fallback: install from Docker's official repo
+        mkdir -p /usr/local/lib/docker/cli-plugins
+        ARCH=$(dpkg --print-architecture)
+        curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${ARCH}" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+        chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+    }
+fi
 
 # Ensure user is in required groups
 usermod -aG docker,video,input,audio "$ACTUAL_USER"
+echo "   Done"
 
 # -------------------------------------------------------
-# 2. Copy project files
+# 2. Copy project files to /opt/meetingbox
 # -------------------------------------------------------
 echo ""
 echo "2/7  Setting up project directory..."
@@ -59,13 +91,18 @@ mkdir -p "$INSTALL_DIR/data/config"
 mkdir -p "$INSTALL_DIR/data/audio/recordings"
 mkdir -p "$INSTALL_DIR/data/transcripts"
 
-# If we're in the repo, copy everything over
-if [ -f "docker-compose.yml" ]; then
-    echo "   Copying project files to $INSTALL_DIR..."
-    rsync -a --exclude='.git' --exclude='node_modules' --exclude='__pycache__' \
-        . "$INSTALL_DIR/"
-fi
+echo "   Copying project files to $INSTALL_DIR..."
+rsync -a \
+    --exclude='.git' \
+    --exclude='node_modules' \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='venv' \
+    --exclude='.venv' \
+    "$REPO_DIR/" "$INSTALL_DIR/"
+
 chown -R "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
+echo "   Done"
 
 # -------------------------------------------------------
 # 3. Configure X11 display
@@ -83,6 +120,9 @@ if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
     startx -- -nocursor 2>/dev/null
 fi
 XSTART
+    echo "   Added auto-startx to .bashrc"
+else
+    echo "   startx already in .bashrc, skipping"
 fi
 
 # Create .xinitrc — starts X, disables blanking, allows Docker to draw
@@ -105,6 +145,7 @@ XINIT
 
 chmod +x "$ACTUAL_HOME/.xinitrc"
 chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.xinitrc" "$BASHRC"
+echo "   Done"
 
 # -------------------------------------------------------
 # 4. Auto-login on tty1 (so X starts on boot)
@@ -119,6 +160,7 @@ cat > "$AUTOLOGIN_DIR/override.conf" << EOF
 ExecStart=
 ExecStart=-/sbin/agetty --autologin $ACTUAL_USER --noclear %I \$TERM
 EOF
+echo "   Done"
 
 # -------------------------------------------------------
 # 5. Systemd service for Docker Compose
@@ -136,10 +178,9 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-User=$ACTUAL_USER
 WorkingDirectory=$INSTALL_DIR
 ExecStartPre=/bin/bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
-ExecStart=/usr/bin/docker compose up -d --build
+ExecStart=/usr/bin/docker compose up -d
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=300
 
@@ -149,61 +190,94 @@ EOF
 
 systemctl daemon-reload
 systemctl enable meetingbox.service
+echo "   Done"
 
 # -------------------------------------------------------
-# 6. Build & start all containers
+# 6. Clean up old state, build & start containers
 # -------------------------------------------------------
 echo ""
 echo "6/7  Building and starting Docker containers..."
 cd "$INSTALL_DIR"
-sudo -u "$ACTUAL_USER" docker compose build
-sudo -u "$ACTUAL_USER" docker compose up -d
+
+# Stop anything running from a previous install
+docker compose down 2>/dev/null || true
+
+# Remove old Ollama volume to clear stale models (e.g. llama3.1:8b)
+echo "   Removing old Ollama data volume (if any)..."
+docker volume rm meetingbox_ollama-data 2>/dev/null || true
+
+# Build all images
+echo "   Building images (this may take a few minutes on first run)..."
+docker compose build
+
+# Start everything
+echo "   Starting containers..."
+docker compose up -d
 
 echo "   Waiting for services to start..."
-sleep 10
+sleep 15
 
 # Quick health check
-if curl -s http://localhost:8000/health | grep -q "healthy"; then
+echo ""
+if curl -sf http://localhost:8000/health | grep -q "healthy"; then
     echo "   ✓ Backend is healthy"
 else
     echo "   ⚠ Backend not responding yet (may still be starting)"
+    echo "     Check with: docker compose logs web"
 fi
 
-# Check UI container
 if docker ps --format '{{.Names}}' | grep -q meetingbox-ui; then
     echo "   ✓ Device UI container is running"
 else
-    echo "   ⚠ Device UI container not running — check: docker logs meetingbox-ui"
+    echo "   ⚠ Device UI container not running"
+    echo "     Check with: docker logs meetingbox-ui"
+fi
+
+if docker ps --format '{{.Names}}' | grep -q meetingbox-ollama; then
+    echo "   ✓ Ollama container is running (model will auto-download)"
+    echo "     Watch progress: docker logs meetingbox-ollama -f"
+else
+    echo "   ⚠ Ollama container not running"
+    echo "     Check with: docker logs meetingbox-ollama"
 fi
 
 # -------------------------------------------------------
-# 7. Done
+# 7. mDNS so the device is reachable at meetingbox.local
 # -------------------------------------------------------
 echo ""
 echo "7/7  Enabling mDNS (meetingbox.local)..."
 apt-get install -y --no-install-recommends avahi-daemon avahi-utils 2>/dev/null || true
 systemctl enable avahi-daemon 2>/dev/null || true
 systemctl start avahi-daemon 2>/dev/null || true
+echo "   Done"
 
+# -------------------------------------------------------
+# Summary
+# -------------------------------------------------------
 echo ""
 echo "=========================================="
 echo "  Installation complete!"
 echo "=========================================="
 echo ""
-echo "All services run inside Docker. Nothing is installed"
-echo "on the host Python — no venv needed."
+echo "All services run inside Docker — no Python or pip on the host."
 echo ""
 echo "  Project dir:     $INSTALL_DIR"
 echo "  Web dashboard:   http://meetingbox.local:8000"
 echo "  API health:      http://localhost:8000/health"
 echo ""
 echo "Commands:"
-echo "  docker compose ps              # See running containers"
-echo "  docker compose logs -f         # Follow all logs"
-echo "  docker logs meetingbox-ui -f   # Device UI logs only"
+echo "  docker compose ps              # Container status"
+echo "  docker compose logs -f         # All logs"
+echo "  docker logs meetingbox-ui -f   # Device UI logs"
+echo "  docker logs meetingbox-ollama -f  # Ollama model download progress"
 echo "  docker compose restart         # Restart everything"
 echo "  docker compose down            # Stop everything"
 echo "  docker compose up -d --build   # Rebuild & restart"
+echo ""
+echo "NOTE: The Ollama model (phi3:mini, ~2.3GB) downloads in the"
+echo "background on first run. Local summarization won't work until"
+echo "the download finishes. Check progress with:"
+echo "  docker logs meetingbox-ollama -f"
 echo ""
 echo "The screen UI will appear after reboot (X11 auto-starts)."
 echo "Reboot now?  sudo reboot"

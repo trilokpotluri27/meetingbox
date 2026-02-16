@@ -1,19 +1,15 @@
 FROM python:3.11-slim
 
-# ---------------------------------------------------------------
-# System dependencies for Kivy GUI on Raspberry Pi (X11 backend)
-# ---------------------------------------------------------------
+# System dependencies for Kivy GUI on Raspberry Pi (X11 backend):
+# SDL2, OpenGL, X11 client libs, GStreamer, touch input, build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # SDL2 (Kivy rendering backend)
     libsdl2-dev \
     libsdl2-image-dev \
     libsdl2-mixer-dev \
     libsdl2-ttf-dev \
-    # OpenGL
     libgl1-mesa-dev \
     libgles2-mesa-dev \
     libegl1-mesa-dev \
-    # X11 client libs (to connect to the host X server)
     libx11-dev \
     libxext-dev \
     libxrender-dev \
@@ -21,16 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxfixes-dev \
     libxi-dev \
     libxrandr-dev \
-    # GStreamer (Kivy media)
     libgstreamer1.0-dev \
     gstreamer1.0-plugins-base \
-    # Input (touch)
     libmtdev1 \
     libinput-dev \
-    # Build tools
     build-essential \
     pkg-config \
-    # Misc
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
