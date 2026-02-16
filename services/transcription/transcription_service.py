@@ -23,7 +23,7 @@ class TranscriptionService:
 
     # whisper.cpp paths inside this container (cmake build)
     self.whisper_bin = "/app/whisper.cpp/build/bin/whisper-cli"
-    self.model_path = "/app/whisper.cpp/models/ggml-medium.en.bin"
+    self.model_path = "/app/whisper.cpp/models/ggml-medium.bin"
 
     print(f"[Transcription] Service initialized, DB={DB_PATH}")
 
