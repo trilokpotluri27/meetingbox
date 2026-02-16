@@ -1,107 +1,167 @@
 #!/bin/bash
-# MeetingBox Device UI Installation Script
+# MeetingBox Full Installation Script
+# Sets up the Raspberry Pi display, then runs everything via Docker Compose.
 # Tested on Raspberry Pi OS Bookworm (Debian 12)
 
-set -e  # Exit on error
+set -e
 
 echo "=========================================="
-echo "MeetingBox Device UI Installation"
+echo "MeetingBox Installation"
 echo "=========================================="
 
 # Check if running as root
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
     echo "Please run as root (use sudo)"
     exit 1
 fi
 
-# Get the actual user who called sudo
 ACTUAL_USER=${SUDO_USER:-$USER}
 ACTUAL_HOME=$(eval echo ~$ACTUAL_USER)
+PROJECT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 
-# Installation paths
-INSTALL_DIR="/opt/meetingbox/device-ui"
-VENV_DIR="$INSTALL_DIR/venv"
-SYSTEMD_DIR="/etc/systemd/system"
+# ─── 1. System dependencies (display + Docker) ──────────────────
 
 echo ""
 echo "1. Installing system dependencies..."
 apt-get update
 apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-full \
-    python3-dev \
-    libsdl2-dev \
-    libsdl2-image-dev \
-    libsdl2-mixer-dev \
-    libsdl2-ttf-dev \
-    libgl1-mesa-dev \
-    libgstreamer1.0-dev \
-    libmtdev1 \
     xserver-xorg \
     xinit \
-    unclutter
+    x11-xserver-utils \
+    unclutter \
+    docker.io \
+    docker-compose-plugin
+
+# Add user to required groups
+usermod -aG docker,video,input,audio "$ACTUAL_USER" 2>/dev/null || true
+
+# ─── 2. Configure X11 display ───────────────────────────────────
 
 echo ""
-echo "2. Creating installation directory..."
-mkdir -p $INSTALL_DIR
-chown -R $ACTUAL_USER:$ACTUAL_USER /opt/meetingbox
+echo "2. Configuring X11 display..."
 
-echo ""
-echo "3. Copying device-ui files..."
-cp -r device-ui/* $INSTALL_DIR/
-chown -R $ACTUAL_USER:$ACTUAL_USER $INSTALL_DIR
+DISPLAY_WIDTH=${DISPLAY_WIDTH:-480}
+DISPLAY_HEIGHT=${DISPLAY_HEIGHT:-320}
 
-echo ""
-echo "4. Creating Python virtual environment..."
-sudo -u $ACTUAL_USER python3 -m venv $VENV_DIR
-echo "   Virtual environment created at $VENV_DIR"
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/99-meetingbox-display.conf << EOF
+Section "Monitor"
+    Identifier "MeetingBox-Display"
+    Option "PreferredMode" "${DISPLAY_WIDTH}x${DISPLAY_HEIGHT}"
+EndSection
 
-echo ""
-echo "5. Installing Python dependencies in venv..."
-sudo -u $ACTUAL_USER $VENV_DIR/bin/pip install --upgrade pip
-sudo -u $ACTUAL_USER $VENV_DIR/bin/pip install -r $INSTALL_DIR/requirements.txt
-echo "   Dependencies installed successfully"
-
-echo ""
-echo "6. Setting up systemd service..."
-
-cat > $SYSTEMD_DIR/meetingbox-ui.service << EOF
-[Unit]
-Description=MeetingBox OLED Display UI
-After=network.target meetingbox-backend.service
-Requires=meetingbox-backend.service
-
-[Service]
-Type=simple
-User=$ACTUAL_USER
-Environment="DISPLAY=:0"
-Environment="BACKEND_URL=http://localhost:8000"
-Environment="KIVY_NO_CONSOLELOG=1"
-WorkingDirectory=$INSTALL_DIR
-ExecStartPre=/bin/sleep 5
-ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/src/main.py
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=meetingbox-ui
-
-# Security settings
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
+Section "Screen"
+    Identifier "Default Screen"
+    Monitor "MeetingBox-Display"
+    DefaultDepth 24
+EndSection
 EOF
 
-echo ""
-echo "7. Setting up backend service (Docker Compose)..."
+# ─── 3. Auto-start X on boot (tty1) ─────────────────────────────
 
-cat > $SYSTEMD_DIR/meetingbox-backend.service << EOF
+echo ""
+echo "3. Setting up auto-start X on boot..."
+
+BASHRC="$ACTUAL_HOME/.bashrc"
+AUTOSTART_LINE='if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then startx -- -nocursor; fi'
+
+if ! grep -qF 'startx' "$BASHRC" 2>/dev/null; then
+    echo "" >> "$BASHRC"
+    echo "# Auto-start X for MeetingBox display" >> "$BASHRC"
+    echo "$AUTOSTART_LINE" >> "$BASHRC"
+fi
+
+# ─── 4. Create .xinitrc ─────────────────────────────────────────
+
+echo ""
+echo "4. Creating .xinitrc..."
+
+cat > "$ACTUAL_HOME/.xinitrc" << 'XINITRC'
+#!/bin/sh
+# Disable screen blanking and power management
+xset s off
+xset -dpms
+xset s noblank
+
+# Hide cursor after 0.1s of inactivity
+unclutter -idle 0.1 &
+
+# Allow Docker containers to connect to X11
+xhost +local:docker
+
+# Keep X running (Docker container renders to this display)
+while true; do
+    sleep 60
+done
+XINITRC
+
+chmod +x "$ACTUAL_HOME/.xinitrc"
+chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.xinitrc"
+
+# ─── 5. Allow X11 access for Docker ─────────────────────────────
+
+echo ""
+echo "5. Configuring X11 access for Docker..."
+
+# Create a systemd service to grant docker X11 access on boot
+cat > /etc/systemd/system/meetingbox-xhost.service << EOF
 [Unit]
-Description=MeetingBox Backend Services (Docker Compose)
+Description=Grant Docker X11 access for MeetingBox
+After=display-manager.service
+
+[Service]
+Type=oneshot
+Environment="DISPLAY=:0"
+ExecStart=/usr/bin/xhost +local:docker
+User=$ACTUAL_USER
+
+[Install]
+WantedBy=graphical.target
+EOF
+
+systemctl daemon-reload
+systemctl enable meetingbox-xhost.service 2>/dev/null || true
+
+# ─── 6. Create data directories ─────────────────────────────────
+
+echo ""
+echo "6. Creating data directories..."
+
+mkdir -p "$PROJECT_DIR/data/audio/recordings"
+mkdir -p "$PROJECT_DIR/data/transcripts"
+mkdir -p "$PROJECT_DIR/data/config"
+chown -R "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_DIR/data"
+
+# ─── 7. Enable Docker on boot ───────────────────────────────────
+
+echo ""
+echo "7. Enabling Docker on boot..."
+systemctl enable docker
+
+# ─── 8. Build and start Docker Compose ───────────────────────────
+
+echo ""
+echo "8. Building Docker containers (this may take a while)..."
+cd "$PROJECT_DIR"
+sudo -u "$ACTUAL_USER" docker compose build
+
+echo ""
+echo "9. Starting all services..."
+sudo -u "$ACTUAL_USER" docker compose up -d
+
+echo ""
+echo "10. Checking service status..."
+sleep 5
+sudo -u "$ACTUAL_USER" docker compose ps
+
+# ─── 11. Auto-start Docker Compose on boot ──────────────────────
+
+echo ""
+echo "11. Setting up auto-start on boot..."
+
+cat > /etc/systemd/system/meetingbox.service << EOF
+[Unit]
+Description=MeetingBox (Docker Compose)
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
@@ -110,48 +170,36 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 User=$ACTUAL_USER
-WorkingDirectory=/opt/meetingbox
+WorkingDirectory=$PROJECT_DIR
 ExecStart=/usr/bin/docker compose up -d
 ExecStop=/usr/bin/docker compose down
-TimeoutStartSec=120
+TimeoutStartSec=180
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-echo ""
-echo "8. Enabling and starting services..."
 systemctl daemon-reload
-systemctl enable meetingbox-backend.service
-systemctl enable meetingbox-ui.service
-
-echo ""
-echo "9. Starting backend services..."
-systemctl start meetingbox-backend.service
-echo "   Waiting for backend to be ready..."
-sleep 10
-
-echo ""
-echo "10. Starting device UI..."
-systemctl start meetingbox-ui.service
-sleep 3
-systemctl status meetingbox-ui.service --no-pager || true
+systemctl enable meetingbox.service
 
 echo ""
 echo "=========================================="
 echo "Installation complete!"
 echo "=========================================="
 echo ""
-echo "Python venv:      $VENV_DIR"
-echo "Python binary:    $VENV_DIR/bin/python"
+echo "All services are running in Docker."
+echo "The display UI will render to your screen."
 echo ""
-echo "Service commands:"
-echo "  Status:   systemctl status meetingbox-ui"
-echo "  Logs:     journalctl -u meetingbox-ui -f"
-echo "  Restart:  systemctl restart meetingbox-ui"
-echo "  Backend:  systemctl status meetingbox-backend"
+echo "Commands:"
+echo "  docker compose ps              # Check all services"
+echo "  docker compose logs -f device-ui  # Device UI logs"
+echo "  docker compose logs -f web     # Backend logs"
+echo "  docker compose restart device-ui  # Restart UI"
+echo "  docker compose down            # Stop everything"
+echo "  docker compose up -d           # Start everything"
 echo ""
-echo "To run the UI manually (for debugging):"
-echo "  cd $INSTALL_DIR"
-echo "  DISPLAY=:0 MOCK_BACKEND=1 $VENV_DIR/bin/python src/main.py"
+echo "To test without a screen (mock mode):"
+echo "  MOCK_BACKEND=1 docker compose up device-ui"
+echo ""
+echo "Reboot to verify auto-start: sudo reboot"
 echo ""

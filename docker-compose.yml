@@ -87,7 +87,45 @@ services:
     volumes:
       - ./data/transcripts:/data/transcripts
       - ./data/audio:/data/audio
+      - ./data/config:/data/config
       - ./frontend/dist:/app/static
+    networks:
+      - meetingbox-net
+
+  # ── Device UI (OLED touchscreen) ──────────────────────────────────
+  device-ui:
+    build:
+      context: ./device-ui
+    container_name: meetingbox-ui
+    restart: unless-stopped
+    depends_on:
+      - web
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DISPLAY=${DISPLAY:-:0}
+      - BACKEND_URL=http://web:8000
+      - BACKEND_WS_URL=ws://web:8000/ws
+      - KIVY_NO_CONSOLELOG=1
+      - FULLSCREEN=${FULLSCREEN:-1}
+      - DISPLAY_WIDTH=${DISPLAY_WIDTH:-480}
+      - DISPLAY_HEIGHT=${DISPLAY_HEIGHT:-320}
+      # Set MOCK_BACKEND=1 in .env to test without real backend
+      - MOCK_BACKEND=${MOCK_BACKEND:-0}
+    volumes:
+      # X11 socket — lets Kivy render to the host display
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Shared device settings (persists across rebuilds)
+      - ./data/config:/data/config
+      # Touch input devices
+      - /run/udev:/run/udev:ro
+    # Device access for display + touch
+    devices:
+      - /dev/dri:/dev/dri             # GPU rendering
+      - /dev/input:/dev/input         # Touchscreen input
+    # Required for X11 + input device access
+    privileged: false
+    security_opt:
+      - seccomp:unconfined
     networks:
       - meetingbox-net
 
@@ -98,4 +136,3 @@ volumes:
 networks:
   meetingbox-net:
     driver: bridge
-
