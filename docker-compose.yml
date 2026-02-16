@@ -61,11 +61,20 @@ services:
       - meetingbox-net
 
   ollama:
-    image: ollama/ollama:latest
+    build:
+      context: ./services/ollama
     container_name: meetingbox-ollama
     restart: unless-stopped
+    environment:
+      - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-phi3:mini}
     volumes:
       - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks:
       - meetingbox-net
 
@@ -75,8 +84,10 @@ services:
     container_name: meetingbox-web
     restart: unless-stopped
     depends_on:
-      - redis
-      - ollama
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_healthy
     environment:
       - PYTHONUNBUFFERED=1
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
