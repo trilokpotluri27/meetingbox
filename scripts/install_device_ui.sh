@@ -127,42 +127,15 @@ echo "   Skipping auto-startx (dev mode — enable for production)"
 #     echo "   startx already in .bashrc, skipping"
 # fi
 
-# Create .xinitrc — starts X, disables blanking, allows Docker to draw
-cat > "$ACTUAL_HOME/.xinitrc" << 'XINIT'
-#!/bin/sh
-# Disable screen blanking & power management
-xset s off
-xset -dpms
-xset s noblank
-
-# Allow any local process (including Docker) to use the display
-xhost +local:
-
-# Hide cursor after 0.5s idle
-unclutter -idle 0.5 -root &
-
-# Keep X running (systemd services draw on this display)
-while true; do sleep 3600; done
-XINIT
-
-chmod +x "$ACTUAL_HOME/.xinitrc"
-chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.xinitrc" "$BASHRC"
-echo "   Done"
+# NOTE: .xinitrc and auto-login are disabled during development.
+# Run scripts/setup_display.sh when the physical screen is connected.
+echo "   Skipping .xinitrc creation (dev mode)"
 
 # -------------------------------------------------------
-# 4. Auto-login on tty1 (so X starts on boot)
+# 4. Auto-login on tty1 (disabled during dev)
 # -------------------------------------------------------
 echo ""
-echo "4/7  Configuring auto-login on tty1..."
-
-AUTOLOGIN_DIR="/etc/systemd/system/getty@tty1.service.d"
-mkdir -p "$AUTOLOGIN_DIR"
-cat > "$AUTOLOGIN_DIR/override.conf" << EOF
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin $ACTUAL_USER --noclear %I \$TERM
-EOF
-echo "   Done"
+echo "4/7  Skipping auto-login on tty1 (dev mode — run setup_display.sh for production)"
 
 # -------------------------------------------------------
 # 5. Systemd service for Docker Compose

@@ -1,12 +1,27 @@
 #!/bin/bash
 # Configure display for Raspberry Pi with OLED touchscreen
+#
+# NOTE: This script is for PRODUCTION use only (when the
+# physical screen is connected). Do NOT run during development.
+#
+# During dev, the device-ui runs in windowed mode via:
+#   docker compose --profile screen up -d device-ui
 
 set -e
 
 echo "Configuring display for MeetingBox..."
+echo ""
+echo "WARNING: This enables auto-start X11 on boot."
+echo "Only run this when the physical screen is connected."
+echo ""
+read -p "Continue? (y/N) " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    exit 0
+fi
 
 # Detect display resolution
-# This is a placeholder - actual detection depends on hardware
 DISPLAY_WIDTH=${DISPLAY_WIDTH:-480}
 DISPLAY_HEIGHT=${DISPLAY_HEIGHT:-800}
 
@@ -41,11 +56,13 @@ xset s off
 xset -dpms
 xset s noblank
 
+# Allow Docker containers to draw on this display
+xhost +local:
+
 # Hide cursor
 unclutter -idle 0 &
 
-# Start MeetingBox UI (systemd will handle this)
-# Just keep X running
+# Keep X running (Docker device-ui container draws on this display)
 while true; do
     sleep 1
 done
