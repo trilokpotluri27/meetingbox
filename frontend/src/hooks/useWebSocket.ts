@@ -10,13 +10,7 @@ export function useWebSocket() {
 
   useEffect(() => {
     const connect = () => {
-      // In dev mode (Vite on port 3000), connect directly to the backend.
-      // In production, the frontend is served from the backend on the same host.
-      const host = window.location.host
-      const backendHost = host.includes(':3000')
-        ? host.replace(':3000', ':8000')
-        : host
-      const wsUrl = `ws://${backendHost}/ws`
+      const wsUrl = `ws://${window.location.host}/ws`
       ws.current = new WebSocket(wsUrl)
 
       ws.current.onopen = () => {

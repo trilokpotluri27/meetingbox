@@ -22,9 +22,8 @@ class AudioCaptureService:
     with open(config_path, "r") as f:
       self.config = yaml.safe_load(f)
 
-    self.RATE = self.config["audio"]["sample_rate"]
+    self.TARGET_RATE = self.config["audio"]["sample_rate"]  # 16000 for Whisper
     self.CHANNELS = self.config["audio"]["channels"]
-    self.CHUNK = self.config["audio"]["chunk_size"]
     self.FORMAT = pyaudio.paInt16
 
     self.is_recording = False
@@ -42,7 +41,12 @@ class AudioCaptureService:
     self.audio = pyaudio.PyAudio()
     self.stream: pyaudio.Stream | None = None
 
-    print(f"[AudioCapture] Initialized - {self.RATE}Hz, {self.CHANNELS}ch")
+    # Actual capture rate — may differ from TARGET_RATE if the device
+    # doesn't support 16kHz. We resample to TARGET_RATE before saving.
+    self.RATE = self.TARGET_RATE
+    self.CHUNK = self.config["audio"]["chunk_size"]
+
+    print(f"[AudioCapture] Initialized - target {self.TARGET_RATE}Hz, {self.CHANNELS}ch")
 
   # --- Device handling -------------------------------------------------
 
@@ -112,16 +116,52 @@ class AudioCaptureService:
     # Sort: USB/external first, then built-in
     candidates.sort(key=lambda c: (0 if is_likely_usb(c["name"]) else 1))
 
-    # Pick the first candidate that supports our sample rate
+    # Pick the first candidate that supports our target sample rate
     for c in candidates:
       if supports_sample_rate(c):
         label = "USB/external" if is_likely_usb(c["name"]) else "built-in"
-        print(f"[AudioCapture] Selected device {c['index']}: {c['name']} ({label}, {self.RATE}Hz OK)")
+        print(f"[AudioCapture] Selected device {c['index']}: {c['name']} ({label}, {self.TARGET_RATE}Hz OK)")
         return c["index"]
 
-    # Nothing supports our rate -- let PyAudio try the system default
-    print(f"[AudioCapture] WARNING: No device supports {self.RATE}Hz. Falling back to system default.")
+    # No device supports 16kHz — try their native rates and resample
+    print(f"[AudioCapture] No device supports {self.TARGET_RATE}Hz. Trying native rates...")
+    for c in candidates:
+      native_rate = int(c["info"].get("defaultSampleRate", 0))
+      if native_rate <= 0:
+        continue
+      try:
+        ok = self.audio.is_format_supported(
+          native_rate,
+          input_device=c["index"],
+          input_channels=self.CHANNELS,
+          input_format=self.FORMAT,
+        )
+        if ok:
+          label = "USB/external" if is_likely_usb(c["name"]) else "built-in"
+          print(f"[AudioCapture] Selected device {c['index']}: {c['name']} ({label}, native {native_rate}Hz — will resample to {self.TARGET_RATE}Hz)")
+          self.RATE = native_rate
+          # Scale chunk size proportionally so each chunk covers the same time duration
+          self.CHUNK = int(self.config["audio"]["chunk_size"] * native_rate / self.TARGET_RATE)
+          return c["index"]
+      except (ValueError, OSError):
+        continue
+
+    print(f"[AudioCapture] WARNING: No usable input device found. Falling back to system default.")
     return None
+
+  # --- Resampling ------------------------------------------------------
+
+  def _resample(self, audio_bytes: bytes, from_rate: int, to_rate: int) -> bytes:
+    """Resample 16-bit mono PCM from one sample rate to another."""
+    if from_rate == to_rate:
+      return audio_bytes
+    samples = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float64)
+    # Number of output samples
+    num_out = int(len(samples) * to_rate / from_rate)
+    # Linear interpolation resample
+    indices = np.linspace(0, len(samples) - 1, num_out)
+    resampled = np.interp(indices, np.arange(len(samples)), samples)
+    return resampled.astype(np.int16).tobytes()
 
   # --- Recording lifecycle ---------------------------------------------
 
@@ -245,7 +285,24 @@ class AudioCaptureService:
 
   def process_audio_chunk(self, chunk: bytes) -> bool:
     """Return True if this chunk likely contains speech."""
-    return self.vad.is_speech(chunk, self.RATE)
+    # webrtcvad supports 8000, 16000, 32000, 48000 Hz
+    if self.RATE in (8000, 16000, 32000, 48000):
+      vad_rate = self.RATE
+      vad_chunk = chunk
+    else:
+      # Resample to 16kHz for VAD
+      vad_rate = 16000
+      vad_chunk = self._resample(chunk, self.RATE, vad_rate)
+    # webrtcvad requires 10, 20, or 30ms frames
+    frame_len = int(vad_rate * 0.03) * 2  # 30ms of 16-bit samples
+    if len(vad_chunk) > frame_len:
+      vad_chunk = vad_chunk[:frame_len]
+    elif len(vad_chunk) < frame_len:
+      vad_chunk = vad_chunk + b'\x00' * (frame_len - len(vad_chunk))
+    try:
+      return self.vad.is_speech(vad_chunk, vad_rate)
+    except Exception:
+      return True  # Assume speech on VAD error
 
   def save_audio_segment(self, frames: list[bytes], segment_num: int) -> Path:
     assert self.current_session_id is not None
@@ -255,10 +312,14 @@ class AudioCaptureService:
     audio_bytes = b"".join(frames)
     segment_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Resample to target rate (16kHz) if recorded at a different rate
+    if self.RATE != self.TARGET_RATE:
+      audio_bytes = self._resample(audio_bytes, self.RATE, self.TARGET_RATE)
+
     with wave.open(str(segment_path), "wb") as wf:
       wf.setnchannels(self.CHANNELS)
       wf.setsampwidth(self.audio.get_sample_size(self.FORMAT))
-      wf.setframerate(self.RATE)
+      wf.setframerate(self.TARGET_RATE)
       wf.writeframes(audio_bytes)
 
     self.redis_client.publish(
