@@ -9,9 +9,11 @@ the MeetingBox hotspot and enter their home WiFi credentials.
 Flow:
   1. systemd starts this + hotspot on first boot (no .setup_complete marker)
   2. User connects phone to MeetingBox-XXXX hotspot
-  3. Phone opens http://meetingbox.setup (DNS redirected to 192.168.4.1)
+  3. Phone opens http://192.168.4.1
   4. User submits WiFi SSID + password
-  5. This server connects the Pi to that WiFi, marks setup complete, stops itself
+  5. Server responds IMMEDIATELY with success page (before switching WiFi)
+  6. After 3s delay, Pi connects to user's WiFi, hotspot goes down
+  7. .setup_complete is written — OLED advances to Home
 
 Run: sudo python3 scripts/onboard_server.py
 """
@@ -21,12 +23,14 @@ import json
 import os
 import subprocess
 import sys
-import urllib.parse
+import threading
+import time
 from pathlib import Path
 
 LISTEN_PORT = 80
 SETUP_MARKER = "/data/config/.setup_complete"
 HOTSPOT_SCRIPT = os.path.join(os.path.dirname(__file__), "hotspot.sh")
+WIFI_SWITCH_DELAY = 3  # seconds — gives phone time to receive the response
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -76,10 +80,31 @@ HTML_PAGE = """<!DOCTYPE html>
   .scan-item .signal { color: #8E8E93; font-size: 12px; }
   .loader { display: none; text-align: center; padding: 20px; }
   .loader.active { display: block; }
+  .success-card { text-align: center; }
+  .success-card .checkmark { font-size: 48px; margin-bottom: 16px; }
+  .success-card h1 { color: #34C759; margin-bottom: 12px; }
+  .success-card .next-steps {
+    background: #1C1C1E; border-radius: 12px; padding: 16px;
+    margin-top: 20px; text-align: left;
+  }
+  .success-card .next-steps li {
+    color: #AEAEB2; font-size: 14px; margin-bottom: 8px;
+    list-style: none; padding-left: 20px; position: relative;
+  }
+  .success-card .next-steps li::before {
+    content: attr(data-num); position: absolute; left: 0;
+    color: #3888FA; font-weight: 600;
+  }
+  .success-card .url {
+    color: #3888FA; font-weight: 600; font-size: 16px;
+  }
+  .success-card .note {
+    color: #6E6E73; font-size: 12px; margin-top: 16px;
+  }
 </style>
 </head>
 <body>
-<div class="card">
+<div class="card" id="setup-card">
   <h1>MeetingBox Setup</h1>
   <p class="subtitle">Connect your MeetingBox to WiFi</p>
 
@@ -100,6 +125,29 @@ HTML_PAGE = """<!DOCTYPE html>
   </form>
 
   <div id="status" class="status"></div>
+</div>
+
+<div class="card success-card" id="success-card" style="display:none;">
+  <div class="checkmark">&#10003;</div>
+  <h1>WiFi Configured!</h1>
+  <p class="subtitle">MeetingBox is connecting to <strong id="connected-ssid"></strong> now.</p>
+  <p class="subtitle">This hotspot will disconnect in a moment.</p>
+
+  <div class="next-steps">
+    <p style="color:#fff; font-size:15px; font-weight:600; margin-bottom:12px;">To finish setup:</p>
+    <ul style="padding:0;">
+      <li data-num="1.">Connect your phone back to your office WiFi</li>
+      <li data-num="2.">Open your browser and visit:</li>
+    </ul>
+    <p style="text-align:center; margin-top:8px;">
+      <span class="url">meetingbox.local:8000</span>
+    </p>
+    <ul style="padding:0; margin-top:8px;">
+      <li data-num="3.">Set up Gmail, Calendar &amp; other integrations</li>
+    </ul>
+  </div>
+
+  <p class="note">You can close this page. Check the MeetingBox screen for status.</p>
 </div>
 
 <script>
@@ -135,9 +183,9 @@ async function submitWifi(e) {
   const btn = document.getElementById('connect-btn');
 
   btn.disabled = true;
-  btn.textContent = 'Connecting...';
+  btn.textContent = 'Saving...';
   status.className = 'status';
-  status.textContent = 'Connecting to ' + ssid + '...';
+  status.textContent = 'Saving WiFi credentials...';
 
   try {
     const res = await fetch('/api/connect', {
@@ -146,19 +194,22 @@ async function submitWifi(e) {
       body: JSON.stringify({ssid, password})
     });
     const data = await res.json();
-    if (data.status === 'connected') {
-      status.className = 'status success';
-      status.textContent = 'Connected! MeetingBox is setting up — you can close this page.';
-      btn.textContent = 'Done!';
+    if (data.status === 'saved') {
+      // Show success card
+      document.getElementById('setup-card').style.display = 'none';
+      document.getElementById('connected-ssid').textContent = ssid;
+      document.getElementById('success-card').style.display = 'block';
     } else {
       status.className = 'status error';
-      status.textContent = data.message || 'Connection failed. Check password and try again.';
+      status.textContent = data.message || 'Failed to save. Please try again.';
       btn.disabled = false;
       btn.textContent = 'Connect';
     }
   } catch(e) {
     status.className = 'status error';
-    status.textContent = 'Connection lost — MeetingBox may be connecting to your WiFi. Check the device screen.';
+    status.textContent = 'Something went wrong. Please try again.';
+    btn.disabled = false;
+    btn.textContent = 'Connect';
   }
 }
 
@@ -203,7 +254,7 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
                 parts = line.split(":")
                 if len(parts) >= 3 and parts[0] and parts[0] not in seen:
                     if parts[0].startswith("MeetingBox-"):
-                        continue  # Don't show our own hotspot
+                        continue
                     seen.add(parts[0])
                     networks.append({
                         "ssid": parts[0],
@@ -229,65 +280,88 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
             self._json_response({"status": "failed", "message": "No SSID provided"})
             return
 
-        print(f"[Onboard] Connecting to WiFi: {ssid}", flush=True)
+        print(f"[Onboard] Saving WiFi credentials for: {ssid}", flush=True)
 
         try:
-            # Remove any stale connection profile for this SSID
+            # Step 1: Remove any stale connection profile
             subprocess.run(
                 ["nmcli", "connection", "delete", ssid],
                 capture_output=True, text=True, timeout=10,
             )
 
+            # Step 2: Create the connection profile (but DON'T activate yet)
             if password:
-                # Explicit connection creation with security type set —
-                # works around the key-mgmt bug in newer NetworkManager
-                subprocess.run(
+                result = subprocess.run(
                     ["nmcli", "connection", "add",
                      "type", "wifi",
                      "ifname", "wlan0",
                      "con-name", ssid,
                      "ssid", ssid,
+                     "autoconnect", "yes",
                      "--",
                      "wifi-sec.key-mgmt", "wpa-psk",
                      "wifi-sec.psk", password],
                     capture_output=True, text=True, timeout=15,
                 )
+            else:
                 result = subprocess.run(
+                    ["nmcli", "connection", "add",
+                     "type", "wifi",
+                     "ifname", "wlan0",
+                     "con-name", ssid,
+                     "ssid", ssid,
+                     "autoconnect", "yes"],
+                    capture_output=True, text=True, timeout=15,
+                )
+
+            if result.returncode != 0:
+                msg = result.stderr.strip() or result.stdout.strip() or "Failed to save credentials"
+                print(f"[Onboard] Failed to create profile: {msg}", flush=True)
+                self._json_response({"status": "failed", "message": msg})
+                return
+
+            print(f"[Onboard] WiFi profile created for {ssid}", flush=True)
+
+            # Step 3: Respond IMMEDIATELY — phone gets the success page
+            self._json_response({"status": "saved", "ssid": ssid})
+
+            # Step 4: Schedule the actual WiFi switch in a background thread
+            # This gives the phone ~3 seconds to receive and render the success page
+            def delayed_wifi_switch():
+                print(f"[Onboard] Waiting {WIFI_SWITCH_DELAY}s before switching WiFi...", flush=True)
+                time.sleep(WIFI_SWITCH_DELAY)
+
+                print(f"[Onboard] Activating WiFi connection: {ssid}", flush=True)
+                connect_result = subprocess.run(
                     ["nmcli", "connection", "up", ssid],
                     capture_output=True, text=True, timeout=30,
                 )
-            else:
-                # Open network — simple connect
-                result = subprocess.run(
-                    ["nmcli", "dev", "wifi", "connect", ssid],
-                    capture_output=True, text=True, timeout=30,
-                )
 
-            if result.returncode == 0:
-                print(f"[Onboard] WiFi connected to {ssid}", flush=True)
-                self._json_response({"status": "connected"})
+                if connect_result.returncode == 0:
+                    print(f"[Onboard] WiFi connected to {ssid}", flush=True)
 
-                # Mark setup as complete
-                marker = Path(SETUP_MARKER)
-                marker.parent.mkdir(parents=True, exist_ok=True)
-                marker.write_text("1")
-                print(f"[Onboard] Setup marker written: {SETUP_MARKER}", flush=True)
+                    # Write setup complete marker
+                    marker = Path(SETUP_MARKER)
+                    marker.parent.mkdir(parents=True, exist_ok=True)
+                    marker.write_text("1")
+                    print(f"[Onboard] Setup marker written: {SETUP_MARKER}", flush=True)
 
-                # Stop the hotspot (in background, after response is sent)
-                subprocess.Popen(
-                    ["bash", HOTSPOT_SCRIPT, "stop"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-                print("[Onboard] Hotspot stop scheduled — onboarding complete", flush=True)
-            else:
-                msg = result.stderr.strip() or result.stdout.strip() or "Connection failed"
-                print(f"[Onboard] WiFi failed: {msg}", flush=True)
-                # Clean up the failed connection profile
-                subprocess.run(
-                    ["nmcli", "connection", "delete", ssid],
-                    capture_output=True, text=True, timeout=10,
-                )
-                self._json_response({"status": "failed", "message": msg})
+                    # Stop the hotspot
+                    subprocess.run(
+                        ["bash", HOTSPOT_SCRIPT, "stop"],
+                        capture_output=True, text=True, timeout=15,
+                    )
+                    print("[Onboard] Hotspot stopped — onboarding complete", flush=True)
+                else:
+                    msg = connect_result.stderr.strip() or "Connection failed"
+                    print(f"[Onboard] WiFi activation failed: {msg}", flush=True)
+                    # Clean up failed profile
+                    subprocess.run(
+                        ["nmcli", "connection", "delete", ssid],
+                        capture_output=True, text=True, timeout=10,
+                    )
+
+            threading.Thread(target=delayed_wifi_switch, daemon=True).start()
 
         except Exception as e:
             print(f"[Onboard] Error: {e}", flush=True)
