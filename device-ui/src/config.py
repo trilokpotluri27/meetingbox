@@ -200,7 +200,8 @@ DEFAULT_AUTO_DELETE = 'never'       # never, 30, 60, 90
 
 DEVICE_MODEL = 'MeetingBox v1.0'
 HOTSPOT_SSID_PREFIX = 'MeetingBox-'
-SETUP_URL = 'meetingbox.setup'
+HOTSPOT_IP = '192.168.4.1'
+SETUP_URL = f'http://{HOTSPOT_IP}'
 DASHBOARD_URL = 'meetingbox.local'
 
 # ============================================================================

@@ -22,7 +22,7 @@ from kivy.clock import Clock
 from screens.base_screen import BaseScreen
 from components.button import PrimaryButton
 from config import (COLORS, FONT_SIZES, SPACING,
-                    HOTSPOT_SSID_PREFIX, SETUP_URL)
+                    HOTSPOT_SSID_PREFIX, HOTSPOT_IP, SETUP_URL)
 
 try:
     import qrcode
@@ -127,7 +127,7 @@ class WiFiSetupScreen(BaseScreen):
         left.add_widget(s2h)
 
         url_label = Label(
-            text=f'   http://{SETUP_URL}',
+            text=f'   {SETUP_URL}',
             font_size=FONT_SIZES['medium'],
             bold=True,
             color=COLORS['blue'],
@@ -158,7 +158,7 @@ class WiFiSetupScreen(BaseScreen):
             size_hint=(0.45, 1),
         )
 
-        qr_widget = self._generate_qr(f'http://{SETUP_URL}')
+        qr_widget = self._generate_qr(SETUP_URL)
         right.add_widget(qr_widget)
         root.add_widget(right)
 
