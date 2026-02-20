@@ -254,14 +254,43 @@ class WiFiConnect(BaseModel):
 async def wifi_connect(body: WiFiConnect):
     """Connect to a WiFi network using NetworkManager."""
     try:
-        cmd = ["nmcli", "dev", "wifi", "connect", body.ssid]
+        # Remove any stale connection profile first
+        subprocess.run(
+            ["nmcli", "connection", "delete", body.ssid],
+            capture_output=True, text=True, timeout=10,
+        )
+
         if body.password:
-            cmd += ["password", body.password]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            # Explicit creation with security type to avoid key-mgmt bug
+            subprocess.run(
+                ["nmcli", "connection", "add",
+                 "type", "wifi",
+                 "ifname", "wlan0",
+                 "con-name", body.ssid,
+                 "ssid", body.ssid,
+                 "--",
+                 "wifi-sec.key-mgmt", "wpa-psk",
+                 "wifi-sec.psk", body.password],
+                capture_output=True, text=True, timeout=15,
+            )
+            result = subprocess.run(
+                ["nmcli", "connection", "up", body.ssid],
+                capture_output=True, text=True, timeout=30,
+            )
+        else:
+            result = subprocess.run(
+                ["nmcli", "dev", "wifi", "connect", body.ssid],
+                capture_output=True, text=True, timeout=30,
+            )
+
         if result.returncode == 0:
             return {"status": "connected", "message": f"Connected to {body.ssid}"}
         else:
-            return {"status": "failed", "message": result.stderr.strip()}
+            subprocess.run(
+                ["nmcli", "connection", "delete", body.ssid],
+                capture_output=True, text=True, timeout=10,
+            )
+            return {"status": "failed", "message": result.stderr.strip() or result.stdout.strip()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

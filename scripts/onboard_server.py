@@ -232,10 +232,36 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
         print(f"[Onboard] Connecting to WiFi: {ssid}", flush=True)
 
         try:
-            cmd = ["nmcli", "dev", "wifi", "connect", ssid]
+            # Remove any stale connection profile for this SSID
+            subprocess.run(
+                ["nmcli", "connection", "delete", ssid],
+                capture_output=True, text=True, timeout=10,
+            )
+
             if password:
-                cmd += ["password", password]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                # Explicit connection creation with security type set —
+                # works around the key-mgmt bug in newer NetworkManager
+                subprocess.run(
+                    ["nmcli", "connection", "add",
+                     "type", "wifi",
+                     "ifname", "wlan0",
+                     "con-name", ssid,
+                     "ssid", ssid,
+                     "--",
+                     "wifi-sec.key-mgmt", "wpa-psk",
+                     "wifi-sec.psk", password],
+                    capture_output=True, text=True, timeout=15,
+                )
+                result = subprocess.run(
+                    ["nmcli", "connection", "up", ssid],
+                    capture_output=True, text=True, timeout=30,
+                )
+            else:
+                # Open network — simple connect
+                result = subprocess.run(
+                    ["nmcli", "dev", "wifi", "connect", ssid],
+                    capture_output=True, text=True, timeout=30,
+                )
 
             if result.returncode == 0:
                 print(f"[Onboard] WiFi connected to {ssid}", flush=True)
@@ -254,8 +280,13 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
                 )
                 print("[Onboard] Hotspot stop scheduled — onboarding complete", flush=True)
             else:
-                msg = result.stderr.strip() or "Connection failed"
+                msg = result.stderr.strip() or result.stdout.strip() or "Connection failed"
                 print(f"[Onboard] WiFi failed: {msg}", flush=True)
+                # Clean up the failed connection profile
+                subprocess.run(
+                    ["nmcli", "connection", "delete", ssid],
+                    capture_output=True, text=True, timeout=10,
+                )
                 self._json_response({"status": "failed", "message": msg})
 
         except Exception as e:
