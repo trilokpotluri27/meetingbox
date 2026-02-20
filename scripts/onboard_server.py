@@ -28,8 +28,10 @@ import time
 from pathlib import Path
 
 LISTEN_PORT = 80
-SETUP_MARKER = "/data/config/.setup_complete"
-HOTSPOT_SCRIPT = os.path.join(os.path.dirname(__file__), "hotspot.sh")
+# Derive project root from this script's location (scripts/ is one level below root)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SETUP_MARKER = os.path.join(_PROJECT_ROOT, "data", "config", ".setup_complete")
+HOTSPOT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hotspot.sh")
 WIFI_SWITCH_DELAY = 3  # seconds — gives phone time to receive the response
 
 HTML_PAGE = """<!DOCTYPE html>
