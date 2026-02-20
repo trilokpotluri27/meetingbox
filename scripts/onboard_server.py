@@ -131,23 +131,11 @@ HTML_PAGE = """<!DOCTYPE html>
   <div class="checkmark">&#10003;</div>
   <h1>WiFi Configured!</h1>
   <p class="subtitle">MeetingBox is connecting to <strong id="connected-ssid"></strong> now.</p>
-  <p class="subtitle">This hotspot will disconnect in a moment.</p>
-
-  <div class="next-steps">
-    <p style="color:#fff; font-size:15px; font-weight:600; margin-bottom:12px;">To finish setup:</p>
-    <ul style="padding:0;">
-      <li data-num="1.">Connect your phone back to your office WiFi</li>
-      <li data-num="2.">Open your browser and visit:</li>
-    </ul>
-    <p style="text-align:center; margin-top:8px;">
-      <span class="url">meetingbox.local:8000</span>
-    </p>
-    <ul style="padding:0; margin-top:8px;">
-      <li data-num="3.">Set up Gmail, Calendar &amp; other integrations</li>
-    </ul>
-  </div>
-
-  <p class="note">You can close this page. Check the MeetingBox screen for status.</p>
+  <p class="subtitle" style="margin-top:12px;">Setup is complete! You can close this page.</p>
+  <p class="subtitle" style="margin-top:20px; color:#AEAEB2;">Access your dashboard anytime at:</p>
+  <p style="text-align:center; margin-top:4px;">
+    <span class="url">meetingbox.local:8000</span>
+  </p>
 </div>
 
 <script>
