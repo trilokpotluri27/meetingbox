@@ -144,17 +144,13 @@ services:
       - ./data/config:/data/config
       # Share Xauthority so the container can authenticate with X
       - ${XAUTHORITY:-/home/meetingbox/.Xauthority}:/home/uiuser/.Xauthority:ro
-    # Input device access for touchscreen (GPU mount removed —
-    # /dev/dri may not exist on all Pi configs; SDL2 software
-    # rendering works fine without it)
-    devices:
-      - /dev/input:/dev/input
     networks:
       - meetingbox-net
-    # Needed for input device access
-    group_add:
-      - input
-      - video
+    # NOTE: For production with a touchscreen, uncomment:
+    # devices:
+    #   - /dev/input:/dev/input
+    # For GPU accel (requires dtoverlay=vc4-kms-v3d in /boot/config.txt):
+    #   - /dev/dri:/dev/dri
 
 volumes:
   redis-data:

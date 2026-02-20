@@ -35,8 +35,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create non-root user for security
-RUN useradd -m -s /bin/bash uiuser \
+# Create non-root user with host-matching groups for device access
+RUN groupadd -g 44 video 2>/dev/null || true \
+    && groupadd -g 105 input 2>/dev/null || true \
+    && useradd -m -s /bin/bash -G video,input uiuser \
     && chown -R uiuser:uiuser /app
 
 # Kivy config: use SDL2 window provider, disable console log
