@@ -208,7 +208,7 @@ DASHBOARD_URL = 'meetingbox.local'
 # ============================================================================
 
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
-LOG_FILE = os.getenv('LOG_FILE', '/var/log/meetingbox-ui.log')
+LOG_FILE = os.getenv('LOG_FILE', '/tmp/meetingbox-ui.log')
 LOG_TO_CONSOLE = os.getenv('LOG_TO_CONSOLE', '1') == '1'
 
 # ============================================================================

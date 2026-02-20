@@ -8,6 +8,7 @@ Implements the complete boot flow defined in the PRD:
 
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -506,6 +507,21 @@ class MeetingBoxApp(App):
 # ==================================================================
 
 def main():
+    print(f"[MeetingBox] Starting Device UI", flush=True)
+    print(f"[MeetingBox] DISPLAY={os.environ.get('DISPLAY', '(not set)')}", flush=True)
+    print(f"[MeetingBox] FULLSCREEN={os.environ.get('FULLSCREEN', '(not set)')}", flush=True)
+    print(f"[MeetingBox] BACKEND_URL={os.environ.get('BACKEND_URL', '(not set)')}", flush=True)
+    print(f"[MeetingBox] MOCK_BACKEND={os.environ.get('MOCK_BACKEND', '(not set)')}", flush=True)
+
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['ls', '-la', '/tmp/.X11-unix/'],
+            capture_output=True, text=True, timeout=5)
+        print(f"[MeetingBox] X11 socket dir: {result.stdout.strip()}", flush=True)
+    except Exception as e:
+        print(f"[MeetingBox] X11 socket check failed: {e}", flush=True)
+
     logger.info("Starting MeetingBox Device UI")
     try:
         app = MeetingBoxApp()
@@ -514,6 +530,7 @@ def main():
         logger.info("Interrupted by user")
         sys.exit(0)
     except Exception as e:
+        print(f"[MeetingBox] FATAL: {e}", flush=True)
         logger.exception(f"Fatal error: {e}")
         sys.exit(1)
 
