@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import toast from 'react-hot-toast'
 
@@ -16,7 +16,8 @@ export default function Login() {
     setSubmitting(true)
     try {
       await login(username.trim(), password)
-      navigate('/dashboard', { replace: true })
+      const user = useAuthStore.getState().user
+      navigate(user?.onboarding_complete ? '/dashboard' : '/onboarding', { replace: true })
     } catch (err: any) {
       const msg = err?.response?.data?.detail || 'Login failed'
       toast.error(msg)
@@ -75,6 +76,13 @@ export default function Login() {
             {submitting ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
+
+        <p className="mt-6 text-center text-sm text-gray-500">
+          Don&apos;t have an account?{' '}
+          <Link to="/register" className="text-blue-400 hover:text-blue-300 font-medium">
+            Create one
+          </Link>
+        </p>
       </div>
     </div>
   )

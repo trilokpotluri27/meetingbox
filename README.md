@@ -46,7 +46,7 @@ docker compose up --build
 cd frontend && npm install && npm run build && cd ..
 ```
 
-5. Open `http://localhost:8000` (or `http://meetingbox.local:8000` on-device) to access the dashboard.
+5. Open `http://localhost:8000` (or `http://meetingbox.local` on-device) to access the dashboard.
 
 ## Start / Stop meeting and test WAV
 

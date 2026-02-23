@@ -9,9 +9,10 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from auth import get_current_user
 from database import get_connection
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,22 @@ class ActionUpdateRequest(BaseModel):
     draft: Optional[dict] = None
 
 
+_TYPE_MAP = {
+    "email": "email_draft",
+    "email_draft": "email_draft",
+    "calendar": "calendar_invite",
+    "calendar_invite": "calendar_invite",
+    "task": "task_creation",
+    "task_creation": "task_creation",
+    "follow_up": "task_creation",
+    "followup": "task_creation",
+}
+
+
+def _normalize_action_type(raw: str) -> str:
+    return _TYPE_MAP.get(raw.lower().strip(), "task_creation")
+
+
 def extract_actions_from_summary(meeting_id: str, action_items: list) -> list[dict]:
     """Parse action_items from a summary and insert them into the actions table."""
     if not action_items:
@@ -66,17 +83,18 @@ def extract_actions_from_summary(meeting_id: str, action_items: list) -> list[di
             if isinstance(item, str):
                 title = item
                 assignee = None
-                action_type = "task"
+                action_type = "task_creation"
                 draft = {}
             elif isinstance(item, dict):
                 title = item.get("task") or item.get("title") or str(item)
                 assignee = item.get("assignee")
-                action_type = item.get("type", "task")
+                raw_type = item.get("type", "task")
+                action_type = _normalize_action_type(raw_type)
                 draft = {k: v for k, v in item.items() if k not in ("task", "title", "assignee", "type")}
             else:
                 title = str(item)
                 assignee = None
-                action_type = "task"
+                action_type = "task_creation"
                 draft = {}
 
             cur.execute(
@@ -112,7 +130,7 @@ def _row_to_action(row: dict) -> dict:
 
 
 @router.get("/meetings/{meeting_id}/actions")
-async def list_actions(meeting_id: str):
+async def list_actions(meeting_id: str, current_user: dict = Depends(get_current_user)):
     conn = get_connection()
     conn.row_factory = lambda c, r: {col[0]: r[i] for i, col in enumerate(c.description)}
     try:
@@ -128,7 +146,7 @@ async def list_actions(meeting_id: str):
 
 
 @router.patch("/actions/{action_id}")
-async def update_action(action_id: str, body: ActionUpdateRequest):
+async def update_action(action_id: str, body: ActionUpdateRequest, current_user: dict = Depends(get_current_user)):
     conn = get_connection()
     conn.row_factory = lambda c, r: {col[0]: r[i] for i, col in enumerate(c.description)}
     try:
@@ -163,7 +181,7 @@ async def update_action(action_id: str, body: ActionUpdateRequest):
 
 
 @router.post("/actions/{action_id}/approve")
-async def approve_action(action_id: str):
+async def approve_action(action_id: str, current_user: dict = Depends(get_current_user)):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -179,7 +197,7 @@ async def approve_action(action_id: str):
 
 
 @router.post("/actions/{action_id}/dismiss")
-async def dismiss_action(action_id: str):
+async def dismiss_action(action_id: str, current_user: dict = Depends(get_current_user)):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -210,7 +228,7 @@ def _ask_claude_for_draft(client, action: dict, draft: dict) -> dict:
     """Ask Claude to produce a structured draft for the action."""
     action_type = action["type"]
 
-    if action_type in ("email_draft", "email"):
+    if action_type == "email_draft":
         output_schema = (
             '{\n'
             '  "output_type": "email",\n'
@@ -220,7 +238,7 @@ def _ask_claude_for_draft(client, action: dict, draft: dict) -> dict:
             '  "cc": "" \n'
             '}'
         )
-    elif action_type in ("calendar_invite", "calendar"):
+    elif action_type == "calendar_invite":
         output_schema = (
             '{\n'
             '  "output_type": "calendar",\n'
@@ -265,7 +283,7 @@ def _ask_claude_for_draft(client, action: dict, draft: dict) -> dict:
 
 
 @router.post("/actions/{action_id}/execute")
-async def execute_action(action_id: str, request: Request = None):
+async def execute_action(action_id: str, current_user: dict = Depends(get_current_user)):
     """
     Execute an action: Claude generates structured content, then Gmail/Calendar
     APIs deliver it if the user has connected those integrations.
@@ -284,7 +302,16 @@ async def execute_action(action_id: str, request: Request = None):
         conn.close()
 
     if action["status"] == "executed":
-        return {"id": action_id, "status": "already_executed", "message": "This action was already executed."}
+        return {
+            "id": action_id,
+            "status": "already_executed",
+            "delivery_status": "already_executed",
+            "result": {"message": "This action was already executed."},
+        }
+
+    # Allow retry for failed deliveries — reset status so the flow continues
+    if action["status"] == "delivery_failed":
+        logger.info("Retrying previously failed action %s", action_id)
 
     client = _get_anthropic_client()
     if not client:
@@ -306,22 +333,13 @@ async def execute_action(action_id: str, request: Request = None):
     output_type = result_json.get("output_type", "text")
     delivery_status = "draft_only"
 
-    # Step 2: Find the user who owns the meeting (for integration lookup)
-    # For now use the first admin user; when auth is wired to this endpoint, use current_user
-    user_id = None
-    conn = get_connection()
-    conn.row_factory = lambda c, r: {col[0]: r[i] for i, col in enumerate(c.description)}
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
-        row = cur.fetchone()
-        if row:
-            user_id = row["id"]
-    finally:
-        conn.close()
+    user_id = current_user["id"]
 
     # Step 3: Deliver via real API if integration is connected
-    if output_type == "email" and user_id:
+    is_email = output_type == "email" or action["type"] == "email_draft"
+    is_calendar = output_type == "calendar" or action["type"] == "calendar_invite"
+
+    if is_email and user_id:
         creds = get_credentials_for_provider(user_id, "gmail")
         if creds:
             try:
@@ -342,7 +360,7 @@ async def execute_action(action_id: str, request: Request = None):
         else:
             delivery_status = "gmail_not_connected"
 
-    elif output_type == "calendar" and user_id:
+    elif is_calendar and user_id:
         creds = get_credentials_for_provider(user_id, "calendar")
         if creds:
             try:
@@ -371,14 +389,17 @@ async def execute_action(action_id: str, request: Request = None):
 
     result_json["delivery_status"] = delivery_status
 
-    # Step 4: Persist
+    # Step 4: Persist — only mark 'executed' if delivery succeeded or wasn't needed
+    failed_statuses = {"gmail_send_failed", "calendar_create_failed"}
+    action_status = "delivery_failed" if delivery_status in failed_statuses else "executed"
+
     now = datetime.utcnow().isoformat()
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
-            "UPDATE actions SET status = 'executed', executed_at = ?, draft = ? WHERE id = ?",
-            (now, json.dumps({**draft, "execution_result": result_json}), action_id),
+            "UPDATE actions SET status = ?, executed_at = ?, draft = ? WHERE id = ?",
+            (action_status, now, json.dumps({**draft, "execution_result": result_json}), action_id),
         )
         conn.commit()
     finally:
@@ -386,7 +407,7 @@ async def execute_action(action_id: str, request: Request = None):
 
     return {
         "id": action_id,
-        "status": "executed",
+        "status": action_status,
         "delivery_status": delivery_status,
         "result": result_json,
     }

@@ -91,6 +91,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AI_MODEL=${AI_MODEL:-claude-sonnet-4-20250514}
       - OLLAMA_HOST=http://ollama:11434
       - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-phi3:mini}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-meetingbox-dev-secret-change-in-production}

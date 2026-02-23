@@ -13,10 +13,11 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 import psutil
 
+from auth import get_current_user, get_optional_user
 from database import get_connection
 
 router = APIRouter()
@@ -336,10 +337,6 @@ async def install_update():
 # and the device-ui api_client.py both call /api/device/integrations/*.
 # They forward to the real integrations module.
 # ======================================================================
-
-from fastapi import Depends
-from auth import get_current_user, get_optional_user
-
 
 @router.get("/integrations")
 async def list_integrations(current_user: dict | None = Depends(get_optional_user)):

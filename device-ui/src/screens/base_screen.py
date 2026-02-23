@@ -109,7 +109,7 @@ class BaseScreen(Screen):
         footer.add_widget(sep)
 
         self._footer_right = Label(
-            text='Actions: meetingbox.local',
+            text='Dashboard: meetingbox.local',
             font_size=FONT_SIZES['tiny'],
             color=COLORS['gray_500'],
             halign='right',
@@ -126,7 +126,6 @@ class BaseScreen(Screen):
         if not hasattr(self, '_footer_left'):
             return
         wifi = '✓' if wifi_ok else '✗'
-        wifi_color = '' if wifi_ok else ''
         if privacy_mode:
             self._footer_left.text = f'Local Mode   Storage: {free_gb:.0f}GB free'
         else:

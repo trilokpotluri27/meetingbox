@@ -159,7 +159,7 @@ TRANSITION_DURATION = {
 SPLASH_DURATION = 2.0
 
 # "You're All Set" screen duration (seconds)
-ALL_SET_DURATION = 3.0
+ALL_SET_DURATION = 10.0
 
 # ============================================================================
 # FEATURES

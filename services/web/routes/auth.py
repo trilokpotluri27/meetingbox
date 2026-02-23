@@ -36,7 +36,7 @@ class RegisterRequest(BaseModel):
         v = v.strip().lower()
         if len(v) < 3:
             raise ValueError("Username must be at least 3 characters")
-        if not v.isalnum() and "_" not in v:
+        if not all(c.isalnum() or c == '_' for c in v):
             raise ValueError("Username must be alphanumeric (underscores allowed)")
         return v
 
@@ -59,6 +59,17 @@ async def has_users():
     return {"has_users": count_users() > 0}
 
 
+def _user_response(user_id: str, username: str, display_name: str, role: str, onboarding_complete: int) -> dict:
+    """Build a consistent user dict for auth responses."""
+    return {
+        "id": user_id,
+        "username": username,
+        "display_name": display_name,
+        "role": role,
+        "onboarding_complete": bool(onboarding_complete),
+    }
+
+
 @router.post("/setup")
 async def setup_first_user(body: RegisterRequest):
     """Create the first admin user. Only works when no users exist."""
@@ -72,8 +83,8 @@ async def setup_first_user(body: RegisterRequest):
     conn = get_connection()
     try:
         conn.execute(
-            "INSERT INTO users (id, username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, body.username, hashed, body.display_name or body.username, "admin", now),
+            "INSERT INTO users (id, username, password_hash, display_name, role, onboarding_complete, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, body.username, hashed, body.display_name or body.username, "admin", 0, now),
         )
         conn.commit()
     finally:
@@ -83,21 +94,13 @@ async def setup_first_user(body: RegisterRequest):
     logger.info("First admin user created: %s", body.username)
     return {
         "token": token,
-        "user": {
-            "id": user_id,
-            "username": body.username,
-            "display_name": body.display_name or body.username,
-            "role": "admin",
-        },
+        "user": _user_response(user_id, body.username, body.display_name or body.username, "admin", 0),
     }
 
 
 @router.post("/register")
-async def register(body: RegisterRequest, current_user: dict = Depends(get_current_user)):
-    """Register a new user (admin only)."""
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can create users")
-
+async def register(body: RegisterRequest):
+    """Self-register a new user. Open to anyone on the network."""
     if get_user_by_username(body.username):
         raise HTTPException(status_code=409, detail="Username already taken")
 
@@ -108,20 +111,18 @@ async def register(body: RegisterRequest, current_user: dict = Depends(get_curre
     conn = get_connection()
     try:
         conn.execute(
-            "INSERT INTO users (id, username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, body.username, hashed, body.display_name or body.username, "user", now),
+            "INSERT INTO users (id, username, password_hash, display_name, role, onboarding_complete, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, body.username, hashed, body.display_name or body.username, "user", 0, now),
         )
         conn.commit()
     finally:
         conn.close()
 
+    token = create_access_token({"sub": user_id, "role": "user"})
+    logger.info("New user registered: %s", body.username)
     return {
-        "user": {
-            "id": user_id,
-            "username": body.username,
-            "display_name": body.display_name or body.username,
-            "role": "user",
-        }
+        "token": token,
+        "user": _user_response(user_id, body.username, body.display_name or body.username, "user", 0),
     }
 
 
@@ -135,21 +136,32 @@ async def login(body: LoginRequest):
     token = create_access_token({"sub": user["id"], "role": user["role"]})
     return {
         "token": token,
-        "user": {
-            "id": user["id"],
-            "username": user["username"],
-            "display_name": user["display_name"],
-            "role": user["role"],
-        },
+        "user": _user_response(
+            user["id"], user["username"], user["display_name"],
+            user["role"], user.get("onboarding_complete", 0),
+        ),
     }
 
 
 @router.get("/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
     """Return the currently authenticated user."""
-    return {
-        "id": current_user["id"],
-        "username": current_user["username"],
-        "display_name": current_user["display_name"],
-        "role": current_user["role"],
-    }
+    return _user_response(
+        current_user["id"], current_user["username"], current_user["display_name"],
+        current_user["role"], current_user.get("onboarding_complete", 0),
+    )
+
+
+@router.post("/complete-onboarding")
+async def complete_onboarding(current_user: dict = Depends(get_current_user)):
+    """Mark the authenticated user's onboarding as complete."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE users SET onboarding_complete = 1 WHERE id = ?",
+            (current_user["id"],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": "ok"}

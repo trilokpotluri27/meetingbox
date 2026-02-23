@@ -10,7 +10,6 @@ Env vars required:
   GOOGLE_CLIENT_SECRET  -- from Google Cloud Console
 """
 
-import asyncio
 import logging
 import os
 import uuid
@@ -40,14 +39,6 @@ SCOPES_BY_PROVIDER = {
         "https://www.googleapis.com/auth/userinfo.email",
     ]),
     "calendar": " ".join([
-        "https://www.googleapis.com/auth/calendar",
-        "https://www.googleapis.com/auth/calendar.events",
-        "https://www.googleapis.com/auth/userinfo.email",
-    ]),
-    "google": " ".join([
-        "https://www.googleapis.com/auth/gmail.send",
-        "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/calendar",
         "https://www.googleapis.com/auth/calendar.events",
         "https://www.googleapis.com/auth/userinfo.email",
     ]),
@@ -55,6 +46,16 @@ SCOPES_BY_PROVIDER = {
 
 # Active device-code sessions: session_id -> {user_id, provider, device_code, interval, expires_at}
 _pending_sessions: dict[str, dict] = {}
+
+
+def _cleanup_expired_sessions():
+    """Remove sessions whose device codes have expired."""
+    now = datetime.utcnow().timestamp()
+    expired = [sid for sid, s in _pending_sessions.items() if now > s["expires_at"]]
+    for sid in expired:
+        _pending_sessions.pop(sid, None)
+    if expired:
+        logger.debug("Cleaned up %d expired device-code sessions", len(expired))
 
 
 def _check_google_configured():
@@ -83,12 +84,20 @@ def _build_credentials(integration: dict):
     """Build a google.oauth2.credentials.Credentials object from stored tokens."""
     from google.oauth2.credentials import Credentials
 
+    expiry = None
+    if integration.get("token_expiry"):
+        try:
+            expiry = datetime.fromisoformat(integration["token_expiry"])
+        except (ValueError, TypeError):
+            pass
+
     return Credentials(
         token=integration["access_token"],
         refresh_token=integration["refresh_token"],
         token_uri=TOKEN_URL,
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
+        expiry=expiry,
         scopes=integration.get("scopes", "").split(" ") if integration.get("scopes") else [],
     )
 
@@ -212,6 +221,7 @@ async def request_device_code(provider: str, current_user: dict = Depends(get_cu
     Also returns a session_id to poll for completion.
     """
     _check_google_configured()
+    _cleanup_expired_sessions()
 
     if provider not in SCOPES_BY_PROVIDER:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")

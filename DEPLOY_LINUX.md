@@ -113,7 +113,7 @@ Expected containers: `meetingbox-redis`, `meetingbox-audio`, `meetingbox-transcr
 
 ## Phase 3: Validation Tests
 
-Open `http://<VM_IP>:8000` from a Windows browser (or `http://meetingbox.local:8000` if mDNS works).
+Open `http://<VM_IP>:8000` from a Windows browser (or `http://meetingbox.local` if mDNS works).
 
 ### Test 1: Dashboard Loads
 

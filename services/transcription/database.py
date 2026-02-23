@@ -91,10 +91,17 @@ def init_database() -> None:
       password_hash TEXT NOT NULL,
       display_name TEXT,
       role TEXT DEFAULT 'user',
+      onboarding_complete INTEGER DEFAULT 0,
       created_at TEXT
     )
     """
   )
+
+  # Migration: add onboarding_complete to existing users tables
+  try:
+    cursor.execute("ALTER TABLE users ADD COLUMN onboarding_complete INTEGER DEFAULT 0")
+  except sqlite3.OperationalError:
+    pass  # Column already exists
 
   cursor.execute(
     """

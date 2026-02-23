@@ -1,20 +1,13 @@
 import { useAuthStore } from '../store/authStore'
 
 export function useAuth() {
-  const {
-    onboardingComplete,
-    setOnboardingComplete,
-    token,
-    user,
-    logout,
-  } = useAuthStore()
+  const { token, user, logout, completeOnboarding } = useAuthStore()
 
   return {
     isAuthenticated: !!token && !!user,
     user,
-    onboardingComplete,
-    completeOnboarding: () => setOnboardingComplete(true),
-    resetOnboarding: () => setOnboardingComplete(false),
+    onboardingComplete: user?.onboarding_complete ?? false,
+    completeOnboarding,
     logout,
   }
 }

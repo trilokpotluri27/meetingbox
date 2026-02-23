@@ -5,7 +5,9 @@ import { useAuthStore } from './store/authStore'
 import Layout from './components/layout/Layout'
 import ErrorBoundary from './components/ErrorBoundary'
 import Onboarding from './pages/Onboarding'
+import PersonalOnboarding from './pages/PersonalOnboarding'
 import Login from './pages/Login'
+import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import MeetingDetail from './pages/MeetingDetail'
 import LiveRecording from './pages/LiveRecording'
@@ -29,22 +31,23 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />
   }
 
+  if (!user.onboarding_complete) {
+    return <Navigate to="/onboarding" replace />
+  }
+
   return <>{children}</>
 }
 
 export default function App() {
-  const checkAuth = useAuthStore((s) => s.checkAuth)
-  const checkHasUsers = useAuthStore((s) => s.checkHasUsers)
+  const initialize = useAuthStore((s) => s.initialize)
   const token = useAuthStore((s) => s.token)
   const user = useAuthStore((s) => s.user)
   const hasUsers = useAuthStore((s) => s.hasUsers)
   const loading = useAuthStore((s) => s.loading)
-  const onboardingComplete = useAuthStore((s) => s.onboardingComplete)
 
   useEffect(() => {
-    checkAuth()
-    checkHasUsers()
-  }, [checkAuth, checkHasUsers])
+    initialize()
+  }, [initialize])
 
   if (loading) {
     return (
@@ -54,17 +57,33 @@ export default function App() {
     )
   }
 
+  const isAuthed = !!(token && user)
+
   return (
     <ErrorBoundary>
       <BrowserRouter>
         <Toaster position="top-right" />
 
         <Routes>
-          {/* Onboarding — only accessible when no users exist */}
+          {/* First-time device setup -- only when no users exist */}
           <Route
-            path="/onboarding"
+            path="/setup"
             element={
               hasUsers === false ? <Onboarding /> : <Navigate to="/login" />
+            }
+          />
+
+          {/* Self-registration -- only when users already exist and not logged in */}
+          <Route
+            path="/register"
+            element={
+              hasUsers === false ? (
+                <Navigate to="/setup" />
+              ) : isAuthed ? (
+                <Navigate to="/dashboard" />
+              ) : (
+                <Register />
+              )
             }
           />
 
@@ -73,11 +92,25 @@ export default function App() {
             path="/login"
             element={
               hasUsers === false ? (
-                <Navigate to="/onboarding" />
-              ) : token && user ? (
+                <Navigate to="/setup" />
+              ) : isAuthed ? (
                 <Navigate to="/dashboard" />
               ) : (
                 <Login />
+              )
+            }
+          />
+
+          {/* Personal onboarding -- logged in but onboarding not complete */}
+          <Route
+            path="/onboarding"
+            element={
+              !isAuthed ? (
+                <Navigate to="/login" />
+              ) : user?.onboarding_complete ? (
+                <Navigate to="/dashboard" />
+              ) : (
+                <PersonalOnboarding />
               )
             }
           />
@@ -87,11 +120,7 @@ export default function App() {
             path="/"
             element={
               <AuthGate>
-                {!onboardingComplete ? (
-                  <Navigate to="/onboarding" />
-                ) : (
-                  <Layout />
-                )}
+                <Layout />
               </AuthGate>
             }
           >
@@ -108,8 +137,8 @@ export default function App() {
             path="*"
             element={
               hasUsers === false ? (
-                <Navigate to="/onboarding" />
-              ) : token && user ? (
+                <Navigate to="/setup" />
+              ) : isAuthed ? (
                 <Navigate to="/dashboard" />
               ) : (
                 <Navigate to="/login" />

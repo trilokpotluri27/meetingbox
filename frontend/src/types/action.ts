@@ -6,10 +6,11 @@ export interface AgenticAction {
   type: 'email_draft' | 'calendar_invite' | 'task_creation'
   title: string
   assignee: string | null
-  confidence: number
+  confidence: number | null
   draft: EmailDraft | CalendarInviteDraft | Record<string, unknown>
-  status: 'pending' | 'approved' | 'dismissed'
-  created_at: string
+  status: 'pending' | 'approved' | 'dismissed' | 'executed' | 'delivery_failed'
+  executed_at: string | null
+  created_at: string | null
 }
 
 export interface EmailDraft {

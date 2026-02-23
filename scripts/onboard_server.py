@@ -136,7 +136,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <p class="subtitle" style="margin-top:12px;">Setup is complete! You can close this page.</p>
   <p class="subtitle" style="margin-top:20px; color:#AEAEB2;">Access your dashboard anytime at:</p>
   <p style="text-align:center; margin-top:4px;">
-    <span class="url">meetingbox.local:8000</span>
+    <span class="url">meetingbox.local</span>
   </p>
 </div>
 

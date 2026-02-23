@@ -1,12 +1,15 @@
 """
 WiFi Setup Screen – Two-column layout
 
-Left  : Step-by-step instructions + I'M CONNECTED button
-Right : QR code pointing to http://meetingbox.setup
+Left  : Step-by-step instructions + waiting indicator
+Right : QR code pointing to http://192.168.4.1
 
 The actual WiFi hotspot is managed by the host-side onboard service
 (scripts/hotspot.sh + scripts/onboard_server.py). This screen reads the
 SSID from the hotspot status file or falls back to a generated name.
+
+Auto-advances to 'all_set' when the .setup_complete marker appears
+(handled by the global _global_setup_check in main.py).
 """
 
 import subprocess
@@ -17,9 +20,9 @@ from kivy.uix.label import Label
 from kivy.uix.image import Image
 from kivy.uix.widget import Widget
 from kivy.graphics import Color, Rectangle
+from kivy.clock import Clock
 
 from screens.base_screen import BaseScreen
-from components.button import PrimaryButton
 from config import (COLORS, FONT_SIZES, SPACING,
                     HOTSPOT_SSID_PREFIX, HOTSPOT_IP, SETUP_URL)
 
@@ -34,7 +37,6 @@ except ImportError:
 
 def _get_hotspot_ssid() -> str:
     """Read the active hotspot SSID from the system."""
-    # Try reading from hotspot.sh status (runs on host)
     try:
         result = subprocess.run(
             ["bash", "/opt/meetingbox/scripts/hotspot.sh", "status"],
@@ -46,7 +48,6 @@ def _get_hotspot_ssid() -> str:
     except Exception:
         pass
 
-    # Fallback: derive from MAC address
     try:
         mac = Path("/sys/class/net/wlan0/address").read_text().strip()
         suffix = mac.replace(":", "")[-4:].upper()
@@ -63,6 +64,8 @@ class WiFiSetupScreen(BaseScreen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.ssid_label = None
+        self._dot_index = 0
+        self._dot_event = None
         self._build_ui()
 
     def _build_ui(self):
@@ -135,16 +138,38 @@ class WiFiSetupScreen(BaseScreen):
         url_label.bind(size=url_label.setter('text_size'))
         left.add_widget(url_label)
 
+        s3h = Label(
+            text='3. Select your WiFi network',
+            font_size=FONT_SIZES['body'],
+            color=COLORS['white'],
+            halign='left', valign='bottom',
+            size_hint=(1, None), height=24,
+        )
+        s3h.bind(size=s3h.setter('text_size'))
+        left.add_widget(s3h)
+
         left.add_widget(Widget(size_hint=(1, 0.3)))
 
-        btn_row = BoxLayout(size_hint=(1, None), height=60)
-        self.connect_btn = PrimaryButton(
-            text="I'M CONNECTED  →",
-            font_size=FONT_SIZES['medium'],
+        # Waiting indicator (replaces the old "I'M CONNECTED" button)
+        self.waiting_label = Label(
+            text='Waiting for WiFi configuration...',
+            font_size=FONT_SIZES['small'],
+            color=COLORS['gray_500'],
+            halign='left',
+            size_hint=(1, None), height=20,
         )
-        self.connect_btn.bind(on_press=self._on_connected)
-        btn_row.add_widget(self.connect_btn)
-        left.add_widget(btn_row)
+        self.waiting_label.bind(size=self.waiting_label.setter('text_size'))
+        left.add_widget(self.waiting_label)
+
+        self.dots_label = Label(
+            text='',
+            font_size=FONT_SIZES['small'],
+            color=COLORS['gray_500'],
+            halign='left',
+            size_hint=(1, None), height=16,
+        )
+        self.dots_label.bind(size=self.dots_label.setter('text_size'))
+        left.add_widget(self.dots_label)
 
         left.add_widget(Widget(size_hint=(1, None), height=8))
 
@@ -166,6 +191,18 @@ class WiFiSetupScreen(BaseScreen):
         ssid = _get_hotspot_ssid()
         if self.ssid_label:
             self.ssid_label.text = f'   {ssid}'
+        self._dot_index = 0
+        self._dot_event = Clock.schedule_interval(self._animate_dots, 0.6)
+
+    def on_leave(self):
+        if self._dot_event:
+            self._dot_event.cancel()
+            self._dot_event = None
+
+    def _animate_dots(self, _dt):
+        self._dot_index = (self._dot_index + 1) % 4
+        dots = '.' * self._dot_index
+        self.dots_label.text = f'   {dots}'
 
     def _generate_qr(self, url: str):
         """Generate QR code image widget."""
@@ -188,6 +225,3 @@ class WiFiSetupScreen(BaseScreen):
             color=COLORS['gray_500'],
         )
         return lbl
-
-    def _on_connected(self, _inst):
-        self.goto('setup_progress', transition='fade')

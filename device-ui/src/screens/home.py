@@ -98,10 +98,28 @@ class HomeScreen(BaseScreen):
         btn_wrap.add_widget(self.start_btn)
         root.add_widget(btn_wrap)
 
-        # 4. Spacer
+        # 4. Dashboard URL hint
+        url_row = BoxLayout(
+            orientation='vertical',
+            size_hint=(1, None),
+            height=40,
+            padding=[SPACING['screen_padding'], 0],
+        )
+        url_hint = Label(
+            text=f'Web dashboard:  {DASHBOARD_URL}',
+            font_size=FONT_SIZES['small'],
+            color=COLORS['gray_500'],
+            halign='center',
+            valign='middle',
+        )
+        url_hint.bind(size=url_hint.setter('text_size'))
+        url_row.add_widget(url_hint)
+        root.add_widget(url_row)
+
+        # 5. Spacer
         root.add_widget(Widget())
 
-        # 5. Footer (20 px)
+        # 6. Footer (20 px)
         footer = self.build_footer()
         root.add_widget(footer)
 
