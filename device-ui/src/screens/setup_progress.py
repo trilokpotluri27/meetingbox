@@ -7,15 +7,13 @@ Exit conditions (whichever fires first):
   2. .setup_complete marker file appears on disk (written by onboard_server.py)
 """
 
-from pathlib import Path
-
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.widget import Widget
 from kivy.clock import Clock
 
 from screens.base_screen import BaseScreen
-from config import COLORS, FONT_SIZES, SETUP_URL
+from config import COLORS, FONT_SIZES
 
 
 class SetupProgressScreen(BaseScreen):
@@ -25,7 +23,6 @@ class SetupProgressScreen(BaseScreen):
         super().__init__(**kwargs)
         self._dot_index = 0
         self._dot_event = None
-        self._poll_event = None
         self._build_ui()
 
     def _build_ui(self):
@@ -72,36 +69,14 @@ class SetupProgressScreen(BaseScreen):
     def on_enter(self):
         self._dot_index = 0
         self._dot_event = Clock.schedule_interval(self._animate_dots, 0.5)
-        self._poll_event = Clock.schedule_interval(self._check_setup_marker, 2.0)
 
     def on_leave(self):
         if self._dot_event:
             self._dot_event.cancel()
             self._dot_event = None
-        if self._poll_event:
-            self._poll_event.cancel()
-            self._poll_event = None
 
     def _animate_dots(self, _dt):
         self._dot_index = (self._dot_index + 1) % 3
         dots = ['○', '○', '○']
         dots[self._dot_index] = '●'
         self.dots_label.text = '  '.join(dots)
-
-    def _check_setup_marker(self, _dt):
-        """Poll for the .setup_complete marker written by onboard_server.py."""
-        for p in ['/data/config/.setup_complete', '/opt/meetingbox/.setup_complete']:
-            if Path(p).exists():
-                self._complete()
-                return
-
-    def _complete(self):
-        if self._poll_event:
-            self._poll_event.cancel()
-            self._poll_event = None
-        self.status_label.text = 'Setup complete!'
-        self.goto('all_set', transition='fade')
-
-    # Called from main app when setup_complete WebSocket event arrives
-    def on_setup_complete(self, data=None):
-        self._complete()

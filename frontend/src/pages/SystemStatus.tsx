@@ -1,7 +1,5 @@
-// System status page — shows CPU, memory, disk usage
-
-import { useState, useEffect } from 'react'
-import axios from 'axios'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { apiClient } from '../api/client'
 import type { SystemInfo } from '../types/user'
 import LoadingSpinner from '../components/ui/LoadingSpinner'
 
@@ -9,24 +7,27 @@ export default function SystemStatus() {
   const [info, setInfo] = useState<SystemInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await apiClient.get<{ system: SystemInfo }>('/api/system/status')
+      setInfo(res.data.system)
+      setError(null)
+    } catch {
+      setError('Could not reach the backend. Make sure it is running.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await axios.get<{ system: SystemInfo }>('/api/system/status')
-        setInfo(res.data.system)
-      } catch {
-        setError('Could not reach the backend. Make sure it is running.')
-      } finally {
-        setLoading(false)
-      }
-    }
     load()
-
-    // Auto-refresh every 5 seconds
-    const interval = setInterval(load, 5000)
-    return () => clearInterval(interval)
-  }, [])
+    intervalRef.current = setInterval(load, 5000)
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [load])
 
   if (loading) {
     return (
@@ -41,7 +42,13 @@ export default function SystemStatus() {
       <div className="max-w-4xl mx-auto px-4 py-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-4">System Status</h1>
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-800">
-          {error}
+          <p>{error}</p>
+          <button
+            onClick={() => { setLoading(true); load() }}
+            className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
+          >
+            Retry
+          </button>
         </div>
       </div>
     )

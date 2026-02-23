@@ -17,7 +17,6 @@ from kivy.uix.label import Label
 from kivy.uix.image import Image
 from kivy.uix.widget import Widget
 from kivy.graphics import Color, Rectangle
-from kivy.clock import Clock
 
 from screens.base_screen import BaseScreen
 from components.button import PrimaryButton
@@ -64,7 +63,6 @@ class WiFiSetupScreen(BaseScreen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.ssid_label = None
-        self._poll_event = None
         self._build_ui()
 
     def _build_ui(self):
@@ -165,25 +163,9 @@ class WiFiSetupScreen(BaseScreen):
         self.add_widget(root)
 
     def on_enter(self):
-        # Refresh SSID and poll for setup completion
         ssid = _get_hotspot_ssid()
         if self.ssid_label:
             self.ssid_label.text = f'   {ssid}'
-        self._poll_event = Clock.schedule_interval(self._check_setup_complete, 3.0)
-
-    def on_leave(self):
-        if self._poll_event:
-            self._poll_event.cancel()
-            self._poll_event = None
-
-    def _check_setup_complete(self, _dt):
-        """Auto-advance if setup was completed via the web portal."""
-        marker_paths = ['/data/config/.setup_complete',
-                        '/opt/meetingbox/.setup_complete']
-        for p in marker_paths:
-            if Path(p).exists():
-                self.goto('all_set', transition='fade')
-                return
 
     def _generate_qr(self, url: str):
         """Generate QR code image widget."""

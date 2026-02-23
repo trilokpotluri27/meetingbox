@@ -67,15 +67,84 @@ def init_database() -> None:
     """
   )
 
+  cursor.execute(
+    """
+    CREATE TABLE IF NOT EXISTS local_summaries (
+      meeting_id TEXT PRIMARY KEY,
+      summary TEXT,
+      action_items TEXT,
+      decisions TEXT,
+      topics TEXT,
+      sentiment TEXT,
+      model_name TEXT,
+      generated_at TEXT,
+      FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+    )
+    """
+  )
+
+  cursor.execute(
+    """
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      display_name TEXT,
+      role TEXT DEFAULT 'user',
+      created_at TEXT
+    )
+    """
+  )
+
+  cursor.execute(
+    """
+    CREATE TABLE IF NOT EXISTS actions (
+      id TEXT PRIMARY KEY,
+      meeting_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT,
+      assignee TEXT,
+      confidence REAL,
+      draft TEXT,
+      status TEXT DEFAULT 'pending',
+      executed_at TEXT,
+      created_at TEXT,
+      FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+    )
+    """
+  )
+
+  cursor.execute(
+    """
+    CREATE TABLE IF NOT EXISTS integrations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      scopes TEXT,
+      access_token TEXT,
+      refresh_token TEXT,
+      token_expiry TEXT,
+      email TEXT,
+      connected_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+    """
+  )
+
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_integrations_user_provider ON integrations(user_id, provider)")
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_segments_meeting_id ON segments(meeting_id)")
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status)")
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_meetings_created_at ON meetings(created_at)")
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_meeting_id ON actions(meeting_id)")
+  cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status)")
+
   conn.commit()
   conn.close()
 
 
 def get_connection() -> sqlite3.Connection:
-  """
-  Return a new SQLite connection to the shared MeetingBox database.
-
-  Callers are responsible for closing the connection.
-  """
-  return sqlite3.connect(DB_PATH)
+  """Return a new SQLite connection with foreign keys enabled."""
+  conn = sqlite3.connect(DB_PATH)
+  conn.execute("PRAGMA foreign_keys = ON")
+  return conn
 

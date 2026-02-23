@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import subprocess
 from datetime import datetime
@@ -8,6 +9,11 @@ import redis
 
 from database import DB_PATH, init_database, get_connection
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+logger = logging.getLogger("meetingbox.transcription")
+
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+
 
 class TranscriptionService:
   """
@@ -16,7 +22,7 @@ class TranscriptionService:
   """
 
   def __init__(self) -> None:
-    self.redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
+    self.redis_client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
 
     # ensure DB schema exists
     init_database()
@@ -25,15 +31,15 @@ class TranscriptionService:
     self.whisper_bin = "/app/whisper.cpp/build/bin/whisper-cli"
     self.model_path = "/app/whisper.cpp/models/ggml-medium.bin"
 
-    print(f"[Transcription] Service initialized, DB={DB_PATH}")
+    logger.info("Service initialized, DB=%s", DB_PATH)
 
   # --- Whisper wrapper -------------------------------------------------
 
   def transcribe_with_whisper(self, audio_path: str) -> dict | None:
-    print(f"[Transcription] Processing {audio_path}")
+    logger.info("Processing %s", audio_path)
     path = Path(audio_path)
     if not path.exists():
-      print(f"[Transcription] Audio file not found: {audio_path}")
+      logger.error("Audio file not found: %s", audio_path)
       return None
 
     # Use -of (output-file) to explicitly set output base path (without extension).
@@ -58,7 +64,7 @@ class TranscriptionService:
       os.getenv("WHISPER_THREADS", "4"),
     ]
 
-    print(f"[Transcription] Running: {' '.join(cmd)}")
+    logger.info("Running: %s", " ".join(cmd))
 
     try:
       result = subprocess.run(
@@ -68,34 +74,32 @@ class TranscriptionService:
         timeout=600,
       )
     except subprocess.TimeoutExpired:
-      print("[Transcription] Whisper timed out")
+      logger.error("Whisper timed out")
       return None
 
-    # Always log whisper output for debugging
     if result.stdout:
       for line in result.stdout.strip().splitlines()[-10:]:
-        print(f"[Transcription] whisper stdout: {line}")
+        logger.debug("whisper stdout: %s", line)
     if result.stderr:
       for line in result.stderr.strip().splitlines()[-10:]:
-        print(f"[Transcription] whisper stderr: {line}")
-    print(f"[Transcription] whisper exit code: {result.returncode}")
+        logger.debug("whisper stderr: %s", line)
+    logger.info("whisper exit code: %d", result.returncode)
 
     if result.returncode != 0:
       return None
 
-    # List what files exist in the output directory for debugging
     parent = path.parent
     found_files = sorted(parent.glob(path.stem + ".*"))
-    print(f"[Transcription] Files matching {path.stem}.*: {[str(f) for f in found_files]}")
+    logger.debug("Files matching %s.*: %s", path.stem, [str(f) for f in found_files])
 
     if not txt_path.exists() or not srt_path.exists():
-      print(f"[Transcription] Expected: {txt_path} and {srt_path}")
+      logger.error("Expected: %s and %s", txt_path, srt_path)
       return None
 
     full_text = txt_path.read_text(encoding="utf-8", errors="ignore")
     segments = self._parse_srt(srt_path)
 
-    print(f"[Transcription] Completed with {len(segments)} segments")
+    logger.info("Completed with %d segments", len(segments))
     return {"full_text": full_text, "segments": segments}
 
   def _parse_srt(self, path: Path) -> list[dict]:
@@ -141,68 +145,63 @@ class TranscriptionService:
 
   def _ensure_meeting_record(self, meeting_id: str, audio_path: str) -> None:
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-      """
-      INSERT OR IGNORE INTO meetings
-        (id, title, start_time, audio_path, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      """,
-      (
-        meeting_id,
-        f"Meeting {meeting_id}",
-        datetime.now().isoformat(),
-        audio_path,
-        "transcribing",
-        datetime.now().isoformat(),
-      ),
-    )
-    conn.commit()
-    conn.close()
-
-  def _set_meeting_status(self, meeting_id: str, status: str) -> None:
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE meetings SET status = ? WHERE id = ?", (status, meeting_id))
-    conn.commit()
-    conn.close()
-
-  def _save_transcription(self, meeting_id: str, transcription: dict) -> None:
-    conn = get_connection()
-    cur = conn.cursor()
-
-    for seg in transcription["segments"]:
+    try:
+      cur = conn.cursor()
       cur.execute(
         """
-        INSERT INTO segments
-          (meeting_id, segment_num, start_time, end_time, text)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT OR IGNORE INTO meetings
+          (id, title, start_time, audio_path, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
           meeting_id,
-          seg["segment_num"],
-          seg["start_time"],
-          seg["end_time"],
-          seg["text"],
+          f"Meeting {meeting_id}",
+          datetime.now().isoformat(),
+          audio_path,
+          "transcribing",
+          datetime.now().isoformat(),
         ),
       )
+      conn.commit()
+    finally:
+      conn.close()
 
-    cur.execute(
-      """
-      UPDATE meetings
-      SET status = 'transcribed'
-      WHERE id = ?
-      """,
-      (meeting_id,),
-    )
+  def _set_meeting_status(self, meeting_id: str, status: str) -> None:
+    conn = get_connection()
+    try:
+      conn.execute("UPDATE meetings SET status = ? WHERE id = ?", (status, meeting_id))
+      conn.commit()
+    finally:
+      conn.close()
 
-    conn.commit()
-    conn.close()
+  def _save_transcription(self, meeting_id: str, transcription: dict) -> None:
+    conn = get_connection()
+    try:
+      cur = conn.cursor()
+      for seg in transcription["segments"]:
+        cur.execute(
+          """
+          INSERT INTO segments
+            (meeting_id, segment_num, start_time, end_time, text)
+          VALUES (?, ?, ?, ?, ?)
+          """,
+          (
+            meeting_id,
+            seg["segment_num"],
+            seg["start_time"],
+            seg["end_time"],
+            seg["text"],
+          ),
+        )
+      cur.execute("UPDATE meetings SET status = 'transcribed' WHERE id = ?", (meeting_id,))
+      conn.commit()
+    finally:
+      conn.close()
 
   # --- Event loop ------------------------------------------------------
 
   def run(self) -> None:
-    print("[Transcription] Service started, waiting for events...")
+    logger.info("Service started, waiting for events...")
     pubsub = self.redis_client.pubsub()
     pubsub.subscribe("events")
 
@@ -225,11 +224,11 @@ class TranscriptionService:
         self.redis_client.set("recording_state", "idle")
 
       if not meeting_id or not audio_path:
-        print("[Transcription] recording_stopped missing session_id or path (no audio captured?)")
+        logger.warning("recording_stopped missing session_id or path (no audio captured?)")
         set_recording_idle()
         continue
 
-      print(f"[Transcription] Starting transcription for {meeting_id}")
+      logger.info("Starting transcription for %s", meeting_id)
       self._ensure_meeting_record(meeting_id, audio_path)
       transcription = self.transcribe_with_whisper(audio_path)
       if not transcription:

@@ -201,6 +201,75 @@ class BackendClient:
             raise
 
     # ==================================================================
+    # SUMMARIZE API
+    # ==================================================================
+
+    async def summarize_meeting(self, meeting_id: str) -> Dict:
+        """POST /api/meetings/{meeting_id}/summarize (Claude API)"""
+        try:
+            resp = await self.client.post(
+                f"{self.base_url}/api/meetings/{meeting_id}/summarize",
+                timeout=300.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Failed to summarize meeting {meeting_id}: {e}")
+            raise
+
+    async def summarize_meeting_local(self, meeting_id: str) -> Dict:
+        """POST /api/meetings/{meeting_id}/summarize-local (Ollama)"""
+        try:
+            resp = await self.client.post(
+                f"{self.base_url}/api/meetings/{meeting_id}/summarize-local",
+                timeout=300.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Failed to locally summarize meeting {meeting_id}: {e}")
+            raise
+
+    # ==================================================================
+    # ACTIONS API
+    # ==================================================================
+
+    async def get_actions(self, meeting_id: str) -> List[Dict]:
+        """GET /api/meetings/{meeting_id}/actions"""
+        try:
+            resp = await self.client.get(
+                f"{self.base_url}/api/meetings/{meeting_id}/actions")
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Failed to get actions for meeting {meeting_id}: {e}")
+            raise
+
+    async def execute_action(self, action_id: str) -> Dict:
+        """POST /api/actions/{action_id}/execute"""
+        try:
+            resp = await self.client.post(
+                f"{self.base_url}/api/actions/{action_id}/execute",
+                timeout=120.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Failed to execute action {action_id}: {e}")
+            raise
+
+    async def dismiss_action(self, action_id: str) -> Dict:
+        """POST /api/actions/{action_id}/dismiss"""
+        try:
+            resp = await self.client.post(
+                f"{self.base_url}/api/actions/{action_id}/dismiss")
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Failed to dismiss action {action_id}: {e}")
+            raise
+
+    # ==================================================================
     # SETTINGS API (device route)
     # ==================================================================
 

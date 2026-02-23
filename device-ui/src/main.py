@@ -53,6 +53,7 @@ from screens.home import HomeScreen
 from screens.recording import RecordingScreen
 from screens.processing import ProcessingScreen
 from screens.complete import CompleteScreen
+from screens.summary_review import SummaryReviewScreen
 from screens.error import ErrorScreen
 
 # Settings & sub-screens
@@ -171,6 +172,7 @@ class MeetingBoxApp(App):
         self.screen_manager.add_widget(RecordingScreen(name='recording'))
         self.screen_manager.add_widget(ProcessingScreen(name='processing'))
         self.screen_manager.add_widget(CompleteScreen(name='complete'))
+        self.screen_manager.add_widget(SummaryReviewScreen(name='summary_review'))
         self.screen_manager.add_widget(ErrorScreen(name='error'))
 
         self.screen_manager.add_widget(SettingsScreen(name='settings'))
@@ -220,9 +222,26 @@ class MeetingBoxApp(App):
     def on_start(self):
         logger.info("MeetingBox UI started")
         Clock.schedule_once(self._check_backend, 2.0)
+        if self.needs_setup():
+            self._setup_poll = Clock.schedule_interval(self._global_setup_check, 3.0)
+        else:
+            self._setup_poll = None
+
+    def _global_setup_check(self, _dt):
+        """Global poll for setup_complete marker -- fires from any screen."""
+        if not self.needs_setup():
+            if self._setup_poll:
+                self._setup_poll.cancel()
+                self._setup_poll = None
+            onboarding_screens = {'welcome', 'wifi_setup', 'setup_progress'}
+            current = self.screen_manager.current
+            if current in onboarding_screens:
+                self.goto_screen('all_set', 'fade')
 
     def on_stop(self):
         logger.info("MeetingBox UI stopping")
+        if getattr(self, '_setup_poll', None):
+            self._setup_poll.cancel()
         if self.ws_task and not self.ws_task.done():
             self.ws_task.cancel()
         run_async(self.backend.close())
@@ -323,6 +342,7 @@ class MeetingBoxApp(App):
                     'processing_started': self.on_processing_started,
                     'processing_progress': self.on_processing_progress,
                     'processing_complete': self.on_processing_complete,
+                    'summary_complete': self.on_summary_complete,
                     'setup_complete': self.on_setup_complete,
                     'update_progress': self.on_update_progress,
                     'error': self.on_error_event,
@@ -392,20 +412,27 @@ class MeetingBoxApp(App):
     def on_processing_complete(self, data):
         meeting_id = data.get('meeting_id')
 
-        def _switch(_dt):
-            screen = self.screen_manager.get_screen('complete')
-            if hasattr(screen, 'set_meeting_id'):
-                screen.set_meeting_id(meeting_id)
-            self.goto_screen('complete', 'fade')
+        def _update_status(_dt):
+            screen = self.screen_manager.get_screen('processing')
+            if hasattr(screen, 'on_progress_update'):
+                screen.on_progress_update(100, 'Generating summary...')
 
-        Clock.schedule_once(_switch, 0)
+        Clock.schedule_once(_update_status, 0)
+        self._auto_summarize(meeting_id)
 
     def on_setup_complete(self, data):
-        """Handle setup_complete WebSocket event during first-boot."""
+        """Handle setup_complete event globally -- works from any onboarding screen."""
         logger.info("Setup complete event received")
-        screen = self.screen_manager.get_screen('setup_progress')
-        if hasattr(screen, 'on_setup_complete'):
-            Clock.schedule_once(lambda _: screen.on_setup_complete(data), 0)
+        onboarding_screens = {'welcome', 'wifi_setup', 'setup_progress'}
+        current = self.screen_manager.current
+
+        def _advance(_dt):
+            if current in onboarding_screens:
+                self.goto_screen('all_set', 'fade')
+            elif current == 'splash':
+                pass  # splash will auto-advance to home via _advance check
+
+        Clock.schedule_once(_advance, 0)
 
     def on_update_progress(self, data):
         progress = data.get('progress', 0)
@@ -415,6 +442,44 @@ class MeetingBoxApp(App):
         if hasattr(screen, 'on_progress_update'):
             Clock.schedule_once(
                 lambda _: screen.on_progress_update(progress, stage, eta), 0)
+
+    def on_summary_complete(self, data):
+        """Handle summary_complete event from AI service (if it fires separately)."""
+        meeting_id = data.get('meeting_id')
+        summary = data.get('summary', {})
+        if meeting_id and self.screen_manager.current == 'processing':
+            def _show(_dt):
+                screen = self.screen_manager.get_screen('summary_review')
+                screen.set_meeting_data(meeting_id, summary)
+                self.goto_screen('summary_review', 'fade')
+            Clock.schedule_once(_show, 0)
+
+    def _auto_summarize(self, meeting_id: str):
+        """After transcription completes, auto-trigger summarization then show review screen."""
+        async def _run():
+            try:
+                privacy = getattr(self, 'privacy_mode', False)
+                if privacy:
+                    summary = await self.backend.summarize_meeting_local(meeting_id)
+                else:
+                    summary = await self.backend.summarize_meeting(meeting_id)
+
+                def _show(_dt):
+                    screen = self.screen_manager.get_screen('summary_review')
+                    screen.set_meeting_data(meeting_id, summary)
+                    self.goto_screen('summary_review', 'fade')
+
+                Clock.schedule_once(_show, 0)
+            except Exception as e:
+                logger.error(f"Auto-summarize failed: {e}")
+                def _fallback(_dt):
+                    screen = self.screen_manager.get_screen('complete')
+                    if hasattr(screen, 'set_meeting_id'):
+                        screen.set_meeting_id(meeting_id)
+                    self.goto_screen('complete', 'fade')
+                Clock.schedule_once(_fallback, 0)
+
+        run_async(_run())
 
     def on_error_event(self, data):
         error_type = data.get('error_type', 'Unknown Error')

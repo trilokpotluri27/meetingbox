@@ -1,5 +1,8 @@
 import json
+import logging
 import os
+import random
+import string
 import subprocess
 import tempfile
 from datetime import datetime
@@ -13,6 +16,9 @@ import shutil
 import httpx
 
 from database import get_connection
+from routes.actions import extract_actions_from_summary
+
+logger = logging.getLogger(__name__)
 
 # Lazy-loaded Anthropic client for on-demand summarization
 _anthropic_client = None
@@ -32,9 +38,19 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
 LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "phi3:mini")
 
 router = APIRouter()
-REDIS = redis.Redis(host="redis", port=6379, decode_responses=True)
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
 RECORDINGS_DIR = Path("/data/audio/recordings")
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+
+MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
+
+
+def _generate_session_id() -> str:
+    """Generate a unique session ID with timestamp + random suffix."""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
+    return f"{ts}_{suffix}"
 
 # Accepted upload extensions; non-WAV are converted with ffmpeg to 16kHz mono WAV
 UPLOAD_AUDIO_EXTENSIONS = {".wav", ".webm", ".ogg", ".mp4", ".m4a"}
@@ -137,7 +153,7 @@ class MeetingDetail(BaseModel):
 @router.post("/start")
 async def start_meeting():
   """Start a new recording. Sends command to audio service via Redis."""
-  session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+  session_id = _generate_session_id()
   REDIS.publish("commands", json.dumps({"action": "start_recording", "session_id": session_id}))
   REDIS.set("current_meeting_id", session_id)
   REDIS.set("recording_state", "recording")
@@ -174,6 +190,56 @@ async def reset_recording_state():
   return {"status": "idle"}
 
 
+@router.post("/pause")
+async def pause_meeting():
+  """Pause the current recording (stub -- audio service does not yet support pause)."""
+  state = REDIS.get("recording_state") or "idle"
+  if state != "recording":
+    raise HTTPException(status_code=400, detail="No active recording to pause")
+  REDIS.set("recording_state", "paused")
+  return {"status": "paused"}
+
+
+@router.post("/resume")
+async def resume_meeting():
+  """Resume a paused recording (stub -- audio service does not yet support resume)."""
+  state = REDIS.get("recording_state") or "idle"
+  if state != "paused":
+    raise HTTPException(status_code=400, detail="No paused recording to resume")
+  REDIS.set("recording_state", "recording")
+  return {"status": "recording"}
+
+
+@router.delete("/{meeting_id}")
+async def delete_meeting(meeting_id: str):
+  """Delete a meeting and all its associated data."""
+  conn = get_connection()
+  conn.execute("PRAGMA foreign_keys = ON")
+  try:
+    cur = conn.cursor()
+    cur.execute("SELECT id, audio_path FROM meetings WHERE id = ?", (meeting_id,))
+    row = cur.fetchone()
+    if not row:
+      raise HTTPException(status_code=404, detail="Meeting not found")
+
+    audio_path = row[1]
+    cur.execute("DELETE FROM actions WHERE meeting_id = ?", (meeting_id,))
+    cur.execute("DELETE FROM segments WHERE meeting_id = ?", (meeting_id,))
+    cur.execute("DELETE FROM summaries WHERE meeting_id = ?", (meeting_id,))
+    cur.execute("DELETE FROM local_summaries WHERE meeting_id = ?", (meeting_id,))
+    cur.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+    conn.commit()
+
+    if audio_path:
+      p = Path(audio_path)
+      if p.exists():
+        p.unlink(missing_ok=True)
+  finally:
+    conn.close()
+
+  return {"status": "deleted", "meeting_id": meeting_id}
+
+
 # --- Test WAV ingest (bypass mic: feed a WAV file into transcription → AI pipeline) ---
 
 @router.post("/test/ingest-wav")
@@ -184,7 +250,7 @@ async def ingest_test_wav(file: UploadFile = File(...)):
   """
   if not file.filename or not file.filename.lower().endswith(".wav"):
     raise HTTPException(status_code=400, detail="Upload must be a .wav file")
-  session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+  session_id = _generate_session_id()
   dest = RECORDINGS_DIR / f"{session_id}.wav"
   try:
     with dest.open("wb") as f:
@@ -237,9 +303,8 @@ async def upload_audio(file: UploadFile = File(...)):
   fn = (file.filename or "").lower()
   ext = Path(fn).suffix or ".webm"
   if ext not in UPLOAD_AUDIO_EXTENSIONS:
-    # Browser may send blob without extension; treat as webm
     ext = ".webm"
-  session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+  session_id = _generate_session_id()
   dest_wav = RECORDINGS_DIR / f"{session_id}.wav"
 
   with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
@@ -273,21 +338,21 @@ async def upload_audio(file: UploadFile = File(...)):
 @router.get("/", response_model=List[MeetingResponse])
 async def list_meetings(limit: int = 50, offset: int = 0, status: Optional[str] = None):
   conn = get_connection()
+  conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}  # type: ignore
-  cur = conn.cursor()
-
-  query = "SELECT * FROM meetings"
-  params: list[object] = []
-  if status:
-    query += " WHERE status = ?"
-    params.append(status)
-  query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-  params.extend([limit, offset])
-
-  cur.execute(query, params)
-  rows = cur.fetchall()
-  conn.close()
-
+  try:
+    cur = conn.cursor()
+    query = "SELECT * FROM meetings"
+    params: list[object] = []
+    if status:
+      query += " WHERE status = ?"
+      params.append(status)
+    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    cur.execute(query, params)
+    rows = cur.fetchall()
+  finally:
+    conn.close()
   return rows
 
 
@@ -299,38 +364,36 @@ async def summarize_meeting(meeting_id: str):
     raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured on the server.")
 
   conn = get_connection()
+  conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
-  cur = conn.cursor()
+  try:
+    cur = conn.cursor()
 
-  # Check meeting exists
-  cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
-  meeting = cur.fetchone()
-  if not meeting:
+    cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+    meeting = cur.fetchone()
+    if not meeting:
+      raise HTTPException(status_code=404, detail="Meeting not found")
+
+    cur.execute("SELECT * FROM summaries WHERE meeting_id = ?", (meeting_id,))
+    existing = cur.fetchone()
+    if existing:
+      result = _normalize_summary_data({
+        "summary": existing["summary"],
+        "action_items": json.loads(existing["action_items"] or "[]"),
+        "decisions": json.loads(existing["decisions"] or "[]"),
+        "topics": json.loads(existing["topics"] or "[]"),
+        "sentiment": existing["sentiment"],
+      })
+      result["status"] = "already_exists"
+      return result
+
+    cur.execute(
+      "SELECT segment_num, start_time, text FROM segments WHERE meeting_id = ? ORDER BY segment_num",
+      (meeting_id,),
+    )
+    rows = cur.fetchall()
+  finally:
     conn.close()
-    raise HTTPException(status_code=404, detail="Meeting not found")
-
-  # Check if summary already exists
-  cur.execute("SELECT * FROM summaries WHERE meeting_id = ?", (meeting_id,))
-  existing = cur.fetchone()
-  if existing:
-    conn.close()
-    result = _normalize_summary_data({
-      "summary": existing["summary"],
-      "action_items": json.loads(existing["action_items"] or "[]"),
-      "decisions": json.loads(existing["decisions"] or "[]"),
-      "topics": json.loads(existing["topics"] or "[]"),
-      "sentiment": existing["sentiment"],
-    })
-    result["status"] = "already_exists"
-    return result
-
-  # Fetch transcript segments
-  cur.execute(
-    "SELECT segment_num, start_time, text FROM segments WHERE meeting_id = ? ORDER BY segment_num",
-    (meeting_id,),
-  )
-  rows = cur.fetchall()
-  conn.close()
 
   if not rows:
     raise HTTPException(status_code=400, detail="No transcript segments found for this meeting.")
@@ -392,28 +455,32 @@ async def summarize_meeting(meeting_id: str):
   # Normalize LLM output (decisions/topics may be objects instead of strings)
   data = _normalize_summary_data(data)
 
-  # Save to DB
   conn = get_connection()
-  cur = conn.cursor()
-  cur.execute(
-    """
-    INSERT OR REPLACE INTO summaries
-      (meeting_id, summary, action_items, decisions, topics, sentiment, generated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    """,
-    (
-      meeting_id,
-      data.get("summary", ""),
-      json.dumps(data.get("action_items", [])),
-      json.dumps(data.get("decisions", [])),
-      json.dumps(data.get("topics", [])),
-      data.get("sentiment", ""),
-      datetime.now().isoformat(),
-    ),
-  )
-  cur.execute("UPDATE meetings SET status = 'completed', end_time = ? WHERE id = ?", (datetime.now().isoformat(), meeting_id))
-  conn.commit()
-  conn.close()
+  conn.execute("PRAGMA foreign_keys = ON")
+  try:
+    cur = conn.cursor()
+    cur.execute(
+      """
+      INSERT OR REPLACE INTO summaries
+        (meeting_id, summary, action_items, decisions, topics, sentiment, generated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      """,
+      (
+        meeting_id,
+        data.get("summary", ""),
+        json.dumps(data.get("action_items", [])),
+        json.dumps(data.get("decisions", [])),
+        json.dumps(data.get("topics", [])),
+        data.get("sentiment", ""),
+        datetime.now().isoformat(),
+      ),
+    )
+    cur.execute("UPDATE meetings SET status = 'completed', end_time = ? WHERE id = ?", (datetime.now().isoformat(), meeting_id))
+    conn.commit()
+  finally:
+    conn.close()
+
+  extract_actions_from_summary(meeting_id, data.get("action_items", []))
 
   return {
     "status": "generated",
@@ -429,39 +496,37 @@ async def summarize_meeting(meeting_id: str):
 async def summarize_meeting_local(meeting_id: str):
   """Generate a summary using the local Ollama LLM (no API key needed)."""
   conn = get_connection()
+  conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
-  cur = conn.cursor()
+  try:
+    cur = conn.cursor()
 
-  # Check meeting exists
-  cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
-  meeting = cur.fetchone()
-  if not meeting:
+    cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+    meeting = cur.fetchone()
+    if not meeting:
+      raise HTTPException(status_code=404, detail="Meeting not found")
+
+    cur.execute("SELECT * FROM local_summaries WHERE meeting_id = ?", (meeting_id,))
+    existing = cur.fetchone()
+    if existing:
+      result = _normalize_summary_data({
+        "summary": existing["summary"],
+        "action_items": json.loads(existing["action_items"] or "[]"),
+        "decisions": json.loads(existing["decisions"] or "[]"),
+        "topics": json.loads(existing["topics"] or "[]"),
+        "sentiment": existing["sentiment"],
+      })
+      result["status"] = "already_exists"
+      result["model_name"] = existing.get("model_name", LOCAL_LLM_MODEL)
+      return result
+
+    cur.execute(
+      "SELECT segment_num, start_time, text FROM segments WHERE meeting_id = ? ORDER BY segment_num",
+      (meeting_id,),
+    )
+    rows = cur.fetchall()
+  finally:
     conn.close()
-    raise HTTPException(status_code=404, detail="Meeting not found")
-
-  # Check if local summary already exists
-  cur.execute("SELECT * FROM local_summaries WHERE meeting_id = ?", (meeting_id,))
-  existing = cur.fetchone()
-  if existing:
-    conn.close()
-    result = _normalize_summary_data({
-      "summary": existing["summary"],
-      "action_items": json.loads(existing["action_items"] or "[]"),
-      "decisions": json.loads(existing["decisions"] or "[]"),
-      "topics": json.loads(existing["topics"] or "[]"),
-      "sentiment": existing["sentiment"],
-    })
-    result["status"] = "already_exists"
-    result["model_name"] = existing.get("model_name", LOCAL_LLM_MODEL)
-    return result
-
-  # Fetch transcript segments
-  cur.execute(
-    "SELECT segment_num, start_time, text FROM segments WHERE meeting_id = ? ORDER BY segment_num",
-    (meeting_id,),
-  )
-  rows = cur.fetchall()
-  conn.close()
 
   if not rows:
     raise HTTPException(status_code=400, detail="No transcript segments found for this meeting.")
@@ -564,28 +629,32 @@ async def summarize_meeting_local(meeting_id: str):
   # Normalize LLM output (decisions/topics may be objects instead of strings)
   data = _normalize_summary_data(data)
 
-  # Save to local_summaries table
   conn = get_connection()
-  cur = conn.cursor()
-  cur.execute(
-    """
-    INSERT OR REPLACE INTO local_summaries
-      (meeting_id, summary, action_items, decisions, topics, sentiment, model_name, generated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """,
-    (
-      meeting_id,
-      data.get("summary", ""),
-      json.dumps(data.get("action_items", [])),
-      json.dumps(data.get("decisions", [])),
-      json.dumps(data.get("topics", [])),
-      data.get("sentiment", ""),
-      LOCAL_LLM_MODEL,
-      datetime.now().isoformat(),
-    ),
-  )
-  conn.commit()
-  conn.close()
+  conn.execute("PRAGMA foreign_keys = ON")
+  try:
+    cur = conn.cursor()
+    cur.execute(
+      """
+      INSERT OR REPLACE INTO local_summaries
+        (meeting_id, summary, action_items, decisions, topics, sentiment, model_name, generated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      """,
+      (
+        meeting_id,
+        data.get("summary", ""),
+        json.dumps(data.get("action_items", [])),
+        json.dumps(data.get("decisions", [])),
+        json.dumps(data.get("topics", [])),
+        data.get("sentiment", ""),
+        LOCAL_LLM_MODEL,
+        datetime.now().isoformat(),
+      ),
+    )
+    conn.commit()
+  finally:
+    conn.close()
+
+  extract_actions_from_summary(meeting_id, data.get("action_items", []))
 
   return {
     "status": "generated",
@@ -601,32 +670,34 @@ async def summarize_meeting_local(meeting_id: str):
 @router.get("/{meeting_id}", response_model=MeetingDetail)
 async def get_meeting(meeting_id: str):
   conn = get_connection()
+  conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}  # type: ignore
-  cur = conn.cursor()
+  try:
+    cur = conn.cursor()
 
-  cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
-  meeting = cur.fetchone()
-  if not meeting:
+    cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+    meeting = cur.fetchone()
+    if not meeting:
+      raise HTTPException(status_code=404, detail="Meeting not found")
+
+    cur.execute(
+      """
+      SELECT segment_num, start_time, end_time, text, speaker_id
+      FROM segments
+      WHERE meeting_id = ?
+      ORDER BY segment_num
+      """,
+      (meeting_id,),
+    )
+    segments_rows = cur.fetchall()
+
+    cur.execute("SELECT * FROM summaries WHERE meeting_id = ?", (meeting_id,))
+    summary_row = cur.fetchone()
+
+    cur.execute("SELECT * FROM local_summaries WHERE meeting_id = ?", (meeting_id,))
+    local_summary_row = cur.fetchone()
+  finally:
     conn.close()
-    raise HTTPException(status_code=404, detail="Meeting not found")
-
-  cur.execute(
-    """
-    SELECT segment_num, start_time, end_time, text, speaker_id
-    FROM segments
-    WHERE meeting_id = ?
-    ORDER BY segment_num
-    """,
-    (meeting_id,),
-  )
-  segments_rows = cur.fetchall()
-
-  cur.execute("SELECT * FROM summaries WHERE meeting_id = ?", (meeting_id,))
-  summary_row = cur.fetchone()
-
-  cur.execute("SELECT * FROM local_summaries WHERE meeting_id = ?", (meeting_id,))
-  local_summary_row = cur.fetchone()
-  conn.close()
 
   segments = [
     {

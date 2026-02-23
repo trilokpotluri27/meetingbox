@@ -1,5 +1,3 @@
-// Zustand store for agentic actions state
-
 import { create } from 'zustand'
 import type { AgenticAction } from '../types/action'
 import { actionsApi } from '../api/actions'
@@ -24,29 +22,18 @@ export const useActionStore = create<ActionState>((set, get) => ({
     try {
       const actions = await actionsApi.list(meetingId)
       set({ actions, loading: false })
-    } catch (error) {
+    } catch {
       set({ error: 'Failed to fetch actions', loading: false })
-      console.error(error)
     }
   },
 
   approveAction: async (actionId: string) => {
-    try {
-      await actionsApi.approve(actionId)
-      set({ actions: get().actions.filter((a) => a.id !== actionId) })
-    } catch (error) {
-      console.error('Failed to approve action:', error)
-      throw error
-    }
+    await actionsApi.approve(actionId)
+    set({ actions: get().actions.filter((a) => a.id !== actionId) })
   },
 
   dismissAction: async (actionId: string) => {
-    try {
-      await actionsApi.dismiss(actionId)
-      set({ actions: get().actions.filter((a) => a.id !== actionId) })
-    } catch (error) {
-      console.error('Failed to dismiss action:', error)
-      throw error
-    }
+    await actionsApi.dismiss(actionId)
+    set({ actions: get().actions.filter((a) => a.id !== actionId) })
   },
 }))

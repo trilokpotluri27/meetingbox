@@ -1,7 +1,10 @@
 from contextlib import asynccontextmanager
 import asyncio
 import json
+import logging
+import os
 import threading
+import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,9 +14,17 @@ import redis
 from database import init_database
 from routes.meetings import router as meetings_router
 from routes.system import router as system_router
+from routes.device import router as device_router
+from routes.auth import router as auth_router
+from routes.actions import router as actions_router
+from routes.integrations import router as integrations_router
 
-# Ensure all DB tables exist (including local_summaries) on startup
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+logger = logging.getLogger("meetingbox.web")
+
 init_database()
+
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 
 
 class ConnectionManager:
@@ -23,20 +34,19 @@ class ConnectionManager:
   async def connect(self, websocket: WebSocket) -> None:
     await websocket.accept()
     self.active_connections.append(websocket)
-    print(f"[WebSocket] Client connected ({len(self.active_connections)} total)")
+    logger.info("WebSocket client connected (%d total)", len(self.active_connections))
 
   def disconnect(self, websocket: WebSocket) -> None:
     if websocket in self.active_connections:
       self.active_connections.remove(websocket)
-      print(f"[WebSocket] Client disconnected ({len(self.active_connections)} total)")
+      logger.info("WebSocket client disconnected (%d total)", len(self.active_connections))
 
   async def broadcast(self, message: dict) -> None:
     dead: list[WebSocket] = []
     for ws in self.active_connections:
       try:
         await ws.send_json(message)
-      except Exception as exc:
-        print(f"[WebSocket] Error sending to client: {exc}")
+      except Exception:
         dead.append(ws)
     for ws in dead:
       self.disconnect(ws)
@@ -44,20 +54,34 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+
 def _redis_listener_thread(queue: asyncio.Queue, loop: asyncio.AbstractEventLoop) -> None:
-  """Blocking Redis pubsub loop - runs in a separate thread so it doesn't block the event loop."""
-  client = redis.Redis(host="redis", port=6379, decode_responses=True)
-  pubsub = client.pubsub()
-  pubsub.subscribe("events", "audio_segments")
-  print("[WebSocket] Redis event listener started")
-  for message in pubsub.listen():
-    if message.get("type") != "message":
-      continue
+  """Blocking Redis pubsub loop with automatic reconnection."""
+  backoff = 1
+  max_backoff = 30
+  while True:
     try:
-      event = json.loads(message["data"])
-      loop.call_soon_threadsafe(queue.put_nowait, event)
-    except json.JSONDecodeError:
-      continue
+      client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
+      pubsub = client.pubsub()
+      pubsub.subscribe("events", "audio_segments")
+      logger.info("Redis event listener started")
+      backoff = 1
+      for message in pubsub.listen():
+        if message.get("type") != "message":
+          continue
+        try:
+          event = json.loads(message["data"])
+          loop.call_soon_threadsafe(queue.put_nowait, event)
+        except json.JSONDecodeError:
+          continue
+    except redis.ConnectionError:
+      logger.warning("Redis connection lost, reconnecting in %ds...", backoff)
+      time.sleep(backoff)
+      backoff = min(backoff * 2, max_backoff)
+    except Exception:
+      logger.exception("Unexpected error in Redis listener, reconnecting in %ds...", backoff)
+      time.sleep(backoff)
+      backoff = min(backoff * 2, max_backoff)
 
 
 async def _redis_event_relay(queue: asyncio.Queue) -> None:
@@ -68,6 +92,8 @@ async def _redis_event_relay(queue: asyncio.Queue) -> None:
       await manager.broadcast(event)
     except asyncio.TimeoutError:
       continue
+    except asyncio.CancelledError:
+      break
 
 
 @asynccontextmanager
@@ -79,6 +105,10 @@ async def lifespan(app: FastAPI):  # type: ignore[override]
   relay = asyncio.create_task(_redis_event_relay(queue))
   yield
   relay.cancel()
+  try:
+    await relay
+  except asyncio.CancelledError:
+    pass
 
 
 app = FastAPI(title="MeetingBox API", version="1.0.0", lifespan=lifespan)
@@ -91,8 +121,12 @@ app.add_middleware(
   allow_headers=["*"],
 )
 
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(meetings_router, prefix="/api/meetings", tags=["meetings"])
 app.include_router(system_router, prefix="/api/system", tags=["system"])
+app.include_router(device_router, prefix="/api/device", tags=["device"])
+app.include_router(actions_router, prefix="/api", tags=["actions"])
+app.include_router(integrations_router, prefix="/api", tags=["integrations"])
 
 
 @app.websocket("/ws")
@@ -103,10 +137,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
       msg = await websocket.receive_text()
       await websocket.send_text(f"ack:{msg}")
   except WebSocketDisconnect:
+    pass
+  except Exception:
+    logger.debug("WebSocket connection error", exc_info=True)
+  finally:
     manager.disconnect(websocket)
 
 
-# Serve SPA: / and /assets/* from static (frontend/dist). Must be last so /api and /ws take precedence.
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 
@@ -119,4 +156,3 @@ if __name__ == "__main__":
   import uvicorn
 
   uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-

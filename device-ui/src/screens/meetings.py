@@ -88,6 +88,6 @@ class MeetingsScreen(BaseScreen):
 
     def _on_meeting(self, instance):
         mid = instance.meeting['id']
-        detail = self.manager.get_screen('meeting_detail')
+        detail = self.app.screen_manager.get_screen('meeting_detail')
         detail.set_meeting_id(mid)
         self.goto('meeting_detail', transition='slide_left')

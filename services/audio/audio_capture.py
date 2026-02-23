@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 import wave
@@ -10,6 +11,11 @@ import pyaudio
 import redis
 import webrtcvad
 import yaml
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+logger = logging.getLogger("meetingbox.audio")
+
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 
 
 class AudioCaptureService:
@@ -32,7 +38,7 @@ class AudioCaptureService:
 
     self.vad = webrtcvad.Vad(self.config["vad"]["aggressiveness"])
 
-    self.redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
+    self.redis_client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
 
     storage_cfg = self.config.get("storage", {})
     self.temp_dir = Path(storage_cfg.get("temp_dir", "/data/audio/temp"))
@@ -46,7 +52,7 @@ class AudioCaptureService:
     self.RATE = self.TARGET_RATE
     self.CHUNK = self.config["audio"]["chunk_size"]
 
-    print(f"[AudioCapture] Initialized - target {self.TARGET_RATE}Hz, {self.CHANNELS}ch")
+    logger.info("Initialized - target %dHz, %dch", self.TARGET_RATE, self.CHANNELS)
 
   # --- Device handling -------------------------------------------------
 
@@ -77,12 +83,12 @@ class AudioCaptureService:
       candidates.append({"index": i, "name": name, "info": device_info})
 
     if not candidates:
-      print("[AudioCapture] No input devices found at all")
+      logger.warning("No input devices found at all")
       return None
 
-    print(f"[AudioCapture] Found {len(candidates)} input device(s):")
+    logger.info("Found %d input device(s):", len(candidates))
     for c in candidates:
-      print(f"  [{c['index']}] {c['name']}  (rate={c['info'].get('defaultSampleRate')})")
+      logger.info("  [%d] %s  (rate=%s)", c['index'], c['name'], c['info'].get('defaultSampleRate'))
 
     # Test which devices actually support our sample rate
     def supports_sample_rate(dev: dict) -> bool:
@@ -120,11 +126,10 @@ class AudioCaptureService:
     for c in candidates:
       if supports_sample_rate(c):
         label = "USB/external" if is_likely_usb(c["name"]) else "built-in"
-        print(f"[AudioCapture] Selected device {c['index']}: {c['name']} ({label}, {self.TARGET_RATE}Hz OK)")
+        logger.info("Selected device %d: %s (%s, %dHz OK)", c['index'], c['name'], label, self.TARGET_RATE)
         return c["index"]
 
-    # No device supports 16kHz — try their native rates and resample
-    print(f"[AudioCapture] No device supports {self.TARGET_RATE}Hz. Trying native rates...")
+    logger.info("No device supports %dHz. Trying native rates...", self.TARGET_RATE)
     for c in candidates:
       native_rate = int(c["info"].get("defaultSampleRate", 0))
       if native_rate <= 0:
@@ -138,7 +143,7 @@ class AudioCaptureService:
         )
         if ok:
           label = "USB/external" if is_likely_usb(c["name"]) else "built-in"
-          print(f"[AudioCapture] Selected device {c['index']}: {c['name']} ({label}, native {native_rate}Hz — will resample to {self.TARGET_RATE}Hz)")
+          logger.info("Selected device %d: %s (%s, native %dHz — will resample to %dHz)", c['index'], c['name'], label, native_rate, self.TARGET_RATE)
           self.RATE = native_rate
           # Scale chunk size proportionally so each chunk covers the same time duration
           self.CHUNK = int(self.config["audio"]["chunk_size"] * native_rate / self.TARGET_RATE)
@@ -146,7 +151,7 @@ class AudioCaptureService:
       except (ValueError, OSError):
         continue
 
-    print(f"[AudioCapture] WARNING: No usable input device found. Falling back to system default.")
+    logger.warning("No usable input device found. Falling back to system default.")
     return None
 
   # --- Resampling ------------------------------------------------------
@@ -167,7 +172,7 @@ class AudioCaptureService:
 
   def start_recording(self, session_id: str | None = None) -> bool:
     if self.is_recording:
-      print("[AudioCapture] Already recording")
+      logger.warning("Already recording")
       return False
 
     if session_id is None:
@@ -212,12 +217,12 @@ class AudioCaptureService:
       ),
     )
 
-    print(f"[AudioCapture] Recording started - session {session_id}")
+    logger.info("Recording started - session %s", session_id)
     return True
 
   def stop_recording(self, session_id_from_command: str | None = None) -> str | None:
     if not self.is_recording:
-      print("[AudioCapture] Not recording")
+      logger.warning("Not recording")
       # Still publish so downstream can set recording_state back to idle
       sid = session_id_from_command or self.current_session_id
       self.redis_client.publish(
@@ -233,7 +238,7 @@ class AudioCaptureService:
       )
       return None
 
-    print(f"[AudioCapture] Stopping recording - session {self.current_session_id}")
+    logger.info("Stopping recording - session %s", self.current_session_id)
     self.is_recording = False
 
     # Wait for the recording thread to finish reading before closing the stream.
@@ -242,7 +247,7 @@ class AudioCaptureService:
     if self._recording_thread is not None:
       import threading
       if isinstance(self._recording_thread, threading.Thread) and self._recording_thread.is_alive():
-        print("[AudioCapture] Waiting for recording thread to finish...")
+        logger.info("Waiting for recording thread to finish...")
         self._recording_thread.join(timeout=5.0)
       self._recording_thread = None
 
@@ -372,13 +377,13 @@ class AudioCaptureService:
 
         if should_save and current_frames:
           self.save_audio_segment(current_frames, segment_num)
-          print(f"[AudioCapture] Saved segment {segment_num} ({len(current_frames)} chunks)")
+          logger.info("Saved segment %d (%d chunks)", segment_num, len(current_frames))
           segment_num += 1
           current_frames = []
           silence_chunks = 0
 
-    except Exception as exc:
-      print(f"[AudioCapture] Error in recording loop: {exc}")
+    except Exception:
+      logger.exception("Error in recording loop")
 
     finally:
       if current_frames:
@@ -393,7 +398,7 @@ class AudioCaptureService:
     segment_files = sorted(session_dir.glob("segment_*.wav"))
 
     if not segment_files:
-      print("[AudioCapture] No segments to combine")
+      logger.warning("No segments to combine")
       return None
 
     output_path = self.recordings_dir / f"{self.current_session_id}.wav"
@@ -414,14 +419,14 @@ class AudioCaptureService:
     except OSError:
       pass
 
-    print(f"[AudioCapture] Combined {len(segment_files)} segments -> {output_path}")
+    logger.info("Combined %d segments -> %s", len(segment_files), output_path)
     return output_path
 
   # --- Command listener -----------------------------------------------
 
   def run(self) -> None:
     """Listen for start/stop commands over Redis and manage recording."""
-    print("[AudioCapture] Service started, waiting for commands...")
+    logger.info("Service started, waiting for commands...")
     pubsub = self.redis_client.pubsub()
     pubsub.subscribe("commands")
 
@@ -431,7 +436,7 @@ class AudioCaptureService:
       try:
         command = json.loads(message["data"])
       except json.JSONDecodeError:
-        print(f"[AudioCapture] Invalid command payload: {message['data']}")
+        logger.warning("Invalid command payload: %s", message['data'])
         continue
 
       action = command.get("action")
@@ -449,5 +454,12 @@ class AudioCaptureService:
 
 if __name__ == "__main__":
   service = AudioCaptureService()
-  service.run()
+  try:
+    service.run()
+  finally:
+    if service.stream:
+      service.stream.stop_stream()
+      service.stream.close()
+    service.audio.terminate()
+    logger.info("PyAudio terminated")
 

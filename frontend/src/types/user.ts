@@ -14,6 +14,7 @@ export interface Integration {
   connected: boolean
   icon: string
   description: string
+  email?: string | null
 }
 
 export interface SystemInfo {

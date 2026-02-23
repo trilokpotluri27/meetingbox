@@ -1,16 +1,43 @@
-// Privacy settings — auto-record toggle, data retention, etc.
-
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import toast from 'react-hot-toast'
+import { settingsApi } from '../../api/settings'
 
 export default function PrivacySettings() {
   const [autoRecord, setAutoRecord] = useState(false)
   const [autoSummarize, setAutoSummarize] = useState(true)
   const [retentionDays, setRetentionDays] = useState(90)
+  const [saving, setSaving] = useState(false)
 
-  const handleSave = () => {
-    // Would call settingsApi.update(...) when the backend supports it
-    toast.success('Privacy settings saved')
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const settings = await settingsApi.get()
+        setAutoRecord(settings.auto_record ?? false)
+        setAutoSummarize(settings.auto_summarize ?? true)
+        const days = settings.auto_delete_days
+        setRetentionDays(days === 'never' ? 0 : Number(days) || 90)
+      } catch {
+        // Settings endpoint may not be available yet
+      }
+    }
+    load()
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await settingsApi.update({
+        auto_record: autoRecord,
+        auto_summarize: autoSummarize,
+        auto_delete_days: retentionDays === 0 ? 'never' : String(retentionDays),
+        privacy_mode: !autoRecord,
+      })
+      toast.success('Privacy settings saved')
+    } catch {
+      toast.error('Failed to save privacy settings')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -27,6 +54,8 @@ export default function PrivacySettings() {
           className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
             autoRecord ? 'bg-primary-600' : 'bg-gray-200'
           }`}
+          role="switch"
+          aria-checked={autoRecord}
         >
           <span
             className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
@@ -47,6 +76,8 @@ export default function PrivacySettings() {
           className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
             autoSummarize ? 'bg-primary-600' : 'bg-gray-200'
           }`}
+          role="switch"
+          aria-checked={autoSummarize}
         >
           <span
             className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
@@ -83,9 +114,10 @@ export default function PrivacySettings() {
       <div className="pt-4 border-t border-gray-200">
         <button
           onClick={handleSave}
-          className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+          disabled={saving}
+          className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
         >
-          Save Changes
+          {saving ? 'Saving...' : 'Save Changes'}
         </button>
       </div>
     </div>

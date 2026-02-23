@@ -38,7 +38,7 @@ class SplashScreen(BaseScreen):
 
         # Logo text (centred)
         self.logo_label = Label(
-            text='MeetingBox',
+            text='MeetingBox AI',
             font_size=36,
             bold=True,
             color=COLORS['white'],

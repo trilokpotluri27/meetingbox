@@ -1,10 +1,20 @@
-// Onboarding flow — 4-step wizard for first-time setup
-
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../hooks/useAuth'
+import { useAuthStore } from '../store/authStore'
 import { settingsApi } from '../api/settings'
+import { apiClient } from '../api/client'
+import { integrationsApi } from '../api/integrations'
+import type { DeviceCodeResponse, PollResponse } from '../api/integrations'
+import type { Integration } from '../types/user'
 import toast from 'react-hot-toast'
+
+const TIMEZONE_OPTIONS = [
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+  'America/Anchorage', 'Pacific/Honolulu', 'America/Toronto', 'America/Vancouver',
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Moscow',
+  'Asia/Dubai', 'Asia/Kolkata', 'Asia/Shanghai', 'Asia/Tokyo',
+  'Australia/Sydney', 'Pacific/Auckland',
+]
 
 interface OnboardingStep {
   id: number
@@ -13,28 +23,149 @@ interface OnboardingStep {
 }
 
 const steps: OnboardingStep[] = [
-  { id: 1, title: 'Welcome', description: "Let's set up your MeetingBox" },
-  { id: 2, title: 'Name Your Device', description: 'Give your MeetingBox a memorable name' },
-  { id: 3, title: 'Connect Integrations', description: 'Optional: Connect Gmail and Calendar' },
-  { id: 4, title: 'All Set!', description: "You're ready to record your first meeting" },
+  { id: 1, title: 'Welcome', description: "Let's set up your MeetingBox AI" },
+  { id: 2, title: 'Create Account', description: 'Create your admin account' },
+  { id: 3, title: 'Name Your Device', description: 'Give your MeetingBox a memorable name' },
+  { id: 4, title: 'Timezone', description: 'Set your local timezone' },
+  { id: 5, title: 'Connect Integrations', description: 'Optional: Connect Gmail and Calendar' },
+  { id: 6, title: 'All Set!', description: "You're ready to record your first meeting" },
 ]
 
 export default function Onboarding() {
   const [currentStep, setCurrentStep] = useState(1)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [deviceName, setDeviceName] = useState('')
+  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York')
   const [isSaving, setIsSaving] = useState(false)
+  const [integrationsList, setIntegrationsList] = useState<Integration[]>([])
+  const [activeSession, setActiveSession] = useState<{
+    provider: string; session_id: string; user_code: string; verification_url: string; interval: number
+  } | null>(null)
+  const [connecting, setConnecting] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navigate = useNavigate()
-  const { completeOnboarding } = useAuth()
+  const setOnboardingComplete = useAuthStore((s) => s.setOnboardingComplete)
+  const setAuthFromSetup = useAuthStore((s) => s.setAuthFromSetup)
+
+  const loadIntegrations = useCallback(async () => {
+    try {
+      const data = await integrationsApi.list()
+      setIntegrationsList(data)
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    if (currentStep === 5) loadIntegrations()
+  }, [currentStep, loadIntegrations])
+
+  useEffect(() => {
+    return () => { if (pollRef.current) clearTimeout(pollRef.current) }
+  }, [])
+
+  const startPolling = useCallback((provider: string, sessionId: string, interval: number) => {
+    const poll = async () => {
+      try {
+        const result: PollResponse = await integrationsApi.poll(provider, sessionId)
+        if (result.status === 'complete') {
+          toast.success(`${provider === 'gmail' ? 'Gmail' : 'Google Calendar'} connected!`)
+          setActiveSession(null)
+          setConnecting(null)
+          loadIntegrations()
+          return
+        }
+        if (result.status === 'expired' || result.status === 'denied' || result.status === 'error') {
+          toast.error(result.message || 'Connection failed')
+          setActiveSession(null)
+          setConnecting(null)
+          return
+        }
+        pollRef.current = setTimeout(poll, (result.interval ?? interval) * 1000)
+      } catch {
+        setActiveSession(null)
+        setConnecting(null)
+      }
+    }
+    pollRef.current = setTimeout(poll, interval * 1000)
+  }, [loadIntegrations])
+
+  const handleIntegrationConnect = async (provider: string) => {
+    setConnecting(provider)
+    try {
+      const data: DeviceCodeResponse = await integrationsApi.requestDeviceCode(provider)
+      setActiveSession({
+        provider,
+        session_id: data.session_id,
+        user_code: data.user_code,
+        verification_url: data.verification_url,
+        interval: data.interval,
+      })
+      startPolling(provider, data.session_id, data.interval)
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || 'Connection not available'
+      toast.error(msg)
+      setConnecting(null)
+    }
+  }
+
+  const handleCancelConnect = () => {
+    if (pollRef.current) clearTimeout(pollRef.current)
+    setActiveSession(null)
+    setConnecting(null)
+  }
 
   const handleNext = async () => {
-    // Save device name on step 2
-    if (currentStep === 2 && deviceName.trim()) {
+    if (currentStep === 2) {
+      if (!username.trim() || !password || !confirmPassword) {
+        toast.error('Please fill in all fields')
+        return
+      }
+      if (password !== confirmPassword) {
+        toast.error('Passwords do not match')
+        return
+      }
+      if (password.length < 6) {
+        toast.error('Password must be at least 6 characters')
+        return
+      }
+      setIsSaving(true)
       try {
-        setIsSaving(true)
+        const { data } = await apiClient.post('/api/auth/setup', {
+          username: username.trim(),
+          password,
+          display_name: username.trim(),
+        })
+        setAuthFromSetup(data.token, data.user)
+      } catch (err: any) {
+        const msg = err?.response?.data?.detail || 'Account creation failed'
+        toast.error(msg)
+        setIsSaving(false)
+        return
+      } finally {
+        setIsSaving(false)
+      }
+    }
+
+    if (currentStep === 3 && deviceName.trim()) {
+      setIsSaving(true)
+      try {
         await settingsApi.setDeviceName(deviceName.trim())
       } catch {
-        // Non-blocking — continue even if save fails
-        console.warn('Could not save device name (backend may be offline)')
+        // Non-blocking
+      } finally {
+        setIsSaving(false)
+      }
+    }
+
+    if (currentStep === 4) {
+      setIsSaving(true)
+      try {
+        await settingsApi.update({ timezone })
+      } catch {
+        // Non-blocking
       } finally {
         setIsSaving(false)
       }
@@ -43,14 +174,21 @@ export default function Onboarding() {
     if (currentStep < steps.length) {
       setCurrentStep(currentStep + 1)
     } else {
-      completeOnboarding()
-      navigate('/dashboard')
+      setOnboardingComplete(true)
+      navigate('/dashboard', { replace: true })
     }
   }
 
   const handleSkip = () => {
-    completeOnboarding()
-    navigate('/dashboard')
+    setOnboardingComplete(true)
+    navigate('/dashboard', { replace: true })
+  }
+
+  const canProceed = () => {
+    if (currentStep === 2) {
+      return username.trim().length >= 3 && password.length >= 6 && password === confirmPassword
+    }
+    return true
   }
 
   return (
@@ -85,15 +223,72 @@ export default function Onboarding() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-4">Welcome to MeetingBox</h1>
+              <h1 className="text-3xl font-bold text-gray-900 mb-4">Welcome to MeetingBox AI</h1>
               <p className="text-lg text-gray-600 mb-8">
-                Let&apos;s get you set up in just 2 minutes. You&apos;ll be recording AI-powered meeting notes in no time.
+                Let&apos;s get you set up in just a few minutes. You&apos;ll be recording AI-powered meeting notes in no time.
               </p>
             </div>
           )}
 
-          {/* Step 2: Name your device */}
+          {/* Step 2: Create Account */}
           {currentStep === 2 && (
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">Create Your Account</h2>
+              <p className="text-gray-600 mb-6">
+                This will be your admin account for managing MeetingBox.
+              </p>
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="onb-username" className="block text-sm font-medium text-gray-700 mb-1">
+                    Username
+                  </label>
+                  <input
+                    type="text"
+                    id="onb-username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="admin"
+                    autoComplete="username"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="onb-password" className="block text-sm font-medium text-gray-700 mb-1">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    id="onb-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="At least 6 characters"
+                    autoComplete="new-password"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="onb-confirm" className="block text-sm font-medium text-gray-700 mb-1">
+                    Confirm Password
+                  </label>
+                  <input
+                    type="password"
+                    id="onb-confirm"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter your password"
+                    autoComplete="new-password"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                  {confirmPassword && password !== confirmPassword && (
+                    <p className="mt-1 text-sm text-red-500">Passwords do not match</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Name your device */}
+          {currentStep === 3 && (
             <div>
               <h2 className="text-2xl font-bold text-gray-900 mb-4">Name Your MeetingBox</h2>
               <p className="text-gray-600 mb-6">
@@ -118,65 +313,124 @@ export default function Onboarding() {
             </div>
           )}
 
-          {/* Step 3: Integrations */}
-          {currentStep === 3 && (
+          {/* Step 4: Timezone */}
+          {currentStep === 4 && (
             <div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">Connect Your Tools (Optional)</h2>
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">Set Your Timezone</h2>
               <p className="text-gray-600 mb-6">
-                Connect Gmail and Calendar to enable AI-powered actions. You can skip this and set up later.
+                We&apos;ve auto-detected your timezone. Change it if needed.
               </p>
-              <div className="space-y-4">
-                {/* Gmail */}
-                <div className="border border-gray-200 rounded-lg p-4 hover:border-primary-500 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
-                        <svg className="w-6 h-6 text-red-600" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
-                          <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
-                        </svg>
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-gray-900">Gmail</h3>
-                        <p className="text-sm text-gray-500">Send AI-drafted emails</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => toast('Gmail integration coming soon!')}
-                      className="px-4 py-2 text-sm font-medium text-primary-700 bg-primary-50 rounded-lg hover:bg-primary-100"
-                    >
-                      Connect
-                    </button>
-                  </div>
-                </div>
-                {/* Google Calendar */}
-                <div className="border border-gray-200 rounded-lg p-4 hover:border-primary-500 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                        <svg className="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
-                        </svg>
-                      </div>
-                      <div>
-                        <h3 className="font-medium text-gray-900">Google Calendar</h3>
-                        <p className="text-sm text-gray-500">Auto-schedule meetings</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => toast('Calendar integration coming soon!')}
-                      className="px-4 py-2 text-sm font-medium text-primary-700 bg-primary-50 rounded-lg hover:bg-primary-100"
-                    >
-                      Connect
-                    </button>
-                  </div>
-                </div>
+              <div className="mb-6">
+                <label htmlFor="timezone" className="block text-sm font-medium text-gray-700 mb-2">
+                  Timezone
+                </label>
+                <select
+                  id="timezone"
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
+                >
+                  {TIMEZONE_OPTIONS.map((tz) => (
+                    <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
+                  ))}
+                </select>
               </div>
             </div>
           )}
 
-          {/* Step 4: Complete */}
-          {currentStep === 4 && (
+          {/* Step 5: Integrations */}
+          {currentStep === 5 && (
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">Connect Your Tools (Optional)</h2>
+              <p className="text-gray-600 mb-6">
+                Connect Gmail and Calendar to enable AI-powered actions. You can skip this and set up later in Settings.
+              </p>
+
+              {/* Device code authorization panel */}
+              {activeSession && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-5 mb-6">
+                  <p className="text-blue-800 mb-3 font-medium">
+                    Open this link and enter the code:
+                  </p>
+                  <div className="flex flex-col items-center space-y-3 mb-4">
+                    <a
+                      href={activeSession.verification_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 underline font-medium hover:text-blue-800"
+                    >
+                      {activeSession.verification_url}
+                    </a>
+                    <div className="bg-white border-2 border-blue-300 rounded-xl px-6 py-3 shadow-sm">
+                      <span className="font-mono text-2xl font-bold tracking-widest text-gray-900">
+                        {activeSession.user_code}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-blue-600 flex items-center">
+                      <svg className="w-4 h-4 mr-1 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Waiting for authorization...
+                    </p>
+                    <button onClick={handleCancelConnect} className="text-sm text-gray-600 hover:text-gray-800">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-4">
+                {[
+                  { id: 'gmail', name: 'Gmail', desc: 'Send AI-drafted emails', bgColor: 'bg-red-100', iconColor: 'text-red-600',
+                    icon: <><path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" /><path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" /></> },
+                  { id: 'calendar', name: 'Google Calendar', desc: 'Auto-schedule meetings', bgColor: 'bg-blue-100', iconColor: 'text-blue-600',
+                    icon: <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" /> },
+                ].map((item) => {
+                  const connected = integrationsList.find(i => i.id === item.id)?.connected ?? false
+                  const email = integrationsList.find(i => i.id === item.id)?.email
+                  return (
+                    <div key={item.id} className="border border-gray-200 rounded-lg p-4 hover:border-primary-500 transition-colors">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-10 h-10 ${item.bgColor} rounded-lg flex items-center justify-center`}>
+                            <svg className={`w-6 h-6 ${item.iconColor}`} fill="currentColor" viewBox="0 0 20 20">
+                              {item.icon}
+                            </svg>
+                          </div>
+                          <div>
+                            <h3 className="font-medium text-gray-900">{item.name}</h3>
+                            <p className="text-sm text-gray-500">{item.desc}</p>
+                            {connected && email && (
+                              <p className="text-xs text-green-600">{email}</p>
+                            )}
+                          </div>
+                        </div>
+                        {connected ? (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800">
+                            Connected
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleIntegrationConnect(item.id)}
+                            disabled={connecting !== null}
+                            className="px-4 py-2 text-sm font-medium text-primary-700 bg-primary-50 rounded-lg hover:bg-primary-100 disabled:opacity-50"
+                          >
+                            {connecting === item.id ? 'Starting...' : 'Connect'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Step 6: Complete */}
+          {currentStep === 6 && (
             <div className="text-center">
               <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
                 <svg className="w-10 h-10 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -185,7 +439,7 @@ export default function Onboarding() {
               </div>
               <h2 className="text-2xl font-bold text-gray-900 mb-4">You&apos;re All Set!</h2>
               <p className="text-gray-600 mb-8">
-                Your MeetingBox is ready to use. Press the button on the device to start recording, or use this dashboard to manage your meetings.
+                Your MeetingBox AI is ready to use. Press the button on the device to start recording, or use this dashboard to manage your meetings.
               </p>
               <div className="bg-primary-50 border border-primary-200 rounded-lg p-4">
                 <p className="text-sm text-primary-800 font-medium mb-2">Quick Tip</p>
@@ -203,7 +457,7 @@ export default function Onboarding() {
                 Skip for now
               </button>
             ) : (
-              <div /> /* spacer */
+              <div />
             )}
             <div className="flex space-x-3">
               {currentStep > 1 && (
@@ -216,7 +470,7 @@ export default function Onboarding() {
               )}
               <button
                 onClick={handleNext}
-                disabled={isSaving}
+                disabled={isSaving || !canProceed()}
                 className="px-6 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50"
               >
                 {isSaving

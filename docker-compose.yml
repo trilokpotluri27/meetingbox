@@ -93,13 +93,28 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OLLAMA_HOST=http://ollama:11434
       - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-phi3:mini}
-    ports:
-      - "8000:8000"
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-meetingbox-dev-secret-change-in-production}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
     volumes:
       - ./data/transcripts:/data/transcripts
       - ./data/audio:/data/audio
       - ./data/config:/data/config
       - ./frontend/dist:/app/static
+    networks:
+      - meetingbox-net
+
+  nginx:
+    image: nginx:alpine
+    container_name: meetingbox-nginx
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "8000:8000"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - meetingbox-net
 

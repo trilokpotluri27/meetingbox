@@ -58,8 +58,8 @@ export default function MeetingDetailPage() {
       } catch {
         setActions([])
       }
-    } catch (error) {
-      console.error('Failed to load meeting:', error)
+    } catch {
+      // Error state handled by loading/empty UI
     } finally {
       setLoading(false)
     }

@@ -1,5 +1,3 @@
-// Settings page with tabbed sub-sections
-
 import { Tab } from '@headlessui/react'
 import GeneralSettings from '../components/settings/GeneralSettings'
 import IntegrationsSettings from '../components/settings/IntegrationsSettings'

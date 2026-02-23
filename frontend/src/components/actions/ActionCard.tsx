@@ -20,10 +20,20 @@ export default function ActionCard({ action, onApproved }: ActionCardProps) {
     try {
       setIsApproving(true)
       await actionsApi.approve(action.id)
-      toast.success('Action approved and executed!')
+      const result = await actionsApi.execute(action.id)
+      const ds = result.delivery_status
+      if (ds === 'sent_via_gmail') {
+        toast.success('Email sent via Gmail!')
+      } else if (ds === 'created_via_calendar') {
+        toast.success('Calendar event created!')
+      } else if (ds === 'gmail_not_connected' || ds === 'calendar_not_connected') {
+        toast.success('Action executed. Connect the integration in Settings to auto-deliver.')
+      } else {
+        toast.success('Action executed!')
+      }
       onApproved()
     } catch {
-      toast.error('Failed to approve action')
+      toast.error('Failed to execute action')
     } finally {
       setIsApproving(false)
     }
@@ -73,7 +83,7 @@ export default function ActionCard({ action, onApproved }: ActionCardProps) {
           </div>
           <div className="flex items-center space-x-2">
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
-              {action.type.replace('_', ' ')}
+              {action.type.replaceAll('_', ' ')}
             </span>
             {action.confidence != null && (
               <span className="text-xs text-gray-500">

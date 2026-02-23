@@ -40,7 +40,7 @@ export default function Dashboard() {
 
   // Filter meetings by search and date
   const filteredMeetings = meetings.filter((meeting) => {
-    if (searchQuery && !meeting.title.toLowerCase().includes(searchQuery.toLowerCase())) {
+    if (searchQuery && !(meeting.title ?? '').toLowerCase().includes(searchQuery.toLowerCase())) {
       return false
     }
     const now = new Date()

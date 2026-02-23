@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from datetime import datetime
 
@@ -6,6 +7,11 @@ import redis
 from anthropic import Anthropic
 
 from database import DB_PATH, get_connection
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+logger = logging.getLogger("meetingbox.ai")
+
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 
 
 class AIService:
@@ -15,34 +21,34 @@ class AIService:
   """
 
   def __init__(self) -> None:
-    self.redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
+    self.redis_client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
-      print("[AI] WARNING: ANTHROPIC_API_KEY is not set; summaries will fail.")
+      logger.warning("ANTHROPIC_API_KEY is not set; summaries will fail.")
 
     self.client = Anthropic(api_key=api_key) if api_key else None
     self.model = os.getenv("AI_MODEL", "claude-sonnet-4-20250514")
     self.max_tokens = int(os.getenv("AI_MAX_TOKENS", "2000"))
 
-    print(f"[AI] Service initialized, DB={DB_PATH}")
-
-  # --- Transcript loading ---------------------------------------------
+    logger.info("Service initialized, DB=%s", DB_PATH)
 
   def _fetch_transcript(self, meeting_id: str) -> str:
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-      """
-      SELECT segment_num, start_time, text
-      FROM segments
-      WHERE meeting_id = ?
-      ORDER BY segment_num
-      """,
-      (meeting_id,),
-    )
-    rows = cur.fetchall()
-    conn.close()
+    try:
+      cur = conn.cursor()
+      cur.execute(
+        """
+        SELECT segment_num, start_time, text
+        FROM segments
+        WHERE meeting_id = ?
+        ORDER BY segment_num
+        """,
+        (meeting_id,),
+      )
+      rows = cur.fetchall()
+    finally:
+      conn.close()
 
     parts: list[str] = []
     for seg_num, start_time, text in rows:
@@ -54,8 +60,6 @@ class AIService:
     mins = int(seconds // 60)
     secs = int(seconds % 60)
     return f"{mins:02d}:{secs:02d}"
-
-  # --- Claude integration ---------------------------------------------
 
   def _build_prompt(self, transcript: str) -> str:
     return (
@@ -85,7 +89,7 @@ class AIService:
 
     transcript = self._fetch_transcript(meeting_id)
     if not transcript:
-      print(f"[AI] No transcript found for {meeting_id}")
+      logger.warning("No transcript found for %s", meeting_id)
       return None
 
     prompt = self._build_prompt(transcript)
@@ -96,11 +100,10 @@ class AIService:
         messages=[{"role": "user", "content": prompt}],
       )
       text = resp.content[0].text
-    except Exception as exc:
-      print(f"[AI] Error calling Claude: {exc}")
+    except Exception:
+      logger.exception("Error calling Claude for %s", meeting_id)
       return None
 
-    # handle possible markdown code fences
     if "```json" in text:
       start = text.find("```json") + len("```json")
       end = text.find("```", start)
@@ -111,50 +114,41 @@ class AIService:
     try:
       data = json.loads(json_str)
     except json.JSONDecodeError:
-      print("[AI] Failed to parse JSON from Claude response")
+      logger.error("Failed to parse JSON from Claude response for %s", meeting_id)
       return None
 
     return data
 
-  # --- Persistence -----------------------------------------------------
-
   def _save_summary(self, meeting_id: str, summary: dict) -> None:
     conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute(
-      """
-      INSERT OR REPLACE INTO summaries
-        (meeting_id, summary, action_items, decisions, topics, sentiment, generated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      """,
-      (
-        meeting_id,
-        summary.get("summary", ""),
-        json.dumps(summary.get("action_items", [])),
-        json.dumps(summary.get("decisions", [])),
-        json.dumps(summary.get("topics", [])),
-        summary.get("sentiment", ""),
-        datetime.now().isoformat(),
-      ),
-    )
-
-    cur.execute(
-      """
-      UPDATE meetings
-      SET status = 'completed', end_time = ?
-      WHERE id = ?
-      """,
-      (datetime.now().isoformat(), meeting_id),
-    )
-
-    conn.commit()
-    conn.close()
-
-  # --- Event loop ------------------------------------------------------
+    try:
+      cur = conn.cursor()
+      cur.execute(
+        """
+        INSERT OR REPLACE INTO summaries
+          (meeting_id, summary, action_items, decisions, topics, sentiment, generated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+          meeting_id,
+          summary.get("summary", ""),
+          json.dumps(summary.get("action_items", [])),
+          json.dumps(summary.get("decisions", [])),
+          json.dumps(summary.get("topics", [])),
+          summary.get("sentiment", ""),
+          datetime.now().isoformat(),
+        ),
+      )
+      cur.execute(
+        "UPDATE meetings SET status = 'completed', end_time = ? WHERE id = ?",
+        (datetime.now().isoformat(), meeting_id),
+      )
+      conn.commit()
+    finally:
+      conn.close()
 
   def run(self) -> None:
-    print("[AI] Service started, waiting for transcription_complete events...")
+    logger.info("Service started, waiting for transcription_complete events...")
     pubsub = self.redis_client.pubsub()
     pubsub.subscribe("events")
 
@@ -173,7 +167,7 @@ class AIService:
       if not meeting_id:
         continue
 
-      print(f"[AI] Generating summary for {meeting_id}")
+      logger.info("Generating summary for %s", meeting_id)
       summary = self._generate_summary(meeting_id)
       if not summary:
         continue
@@ -195,4 +189,3 @@ class AIService:
 if __name__ == "__main__":
   service = AIService()
   service.run()
-

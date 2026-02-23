@@ -1,19 +1,58 @@
-// Root application component — routing, toaster, error boundary
-
+import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import { useAuthStore } from './store/authStore'
 import Layout from './components/layout/Layout'
 import ErrorBoundary from './components/ErrorBoundary'
 import Onboarding from './pages/Onboarding'
+import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import MeetingDetail from './pages/MeetingDetail'
 import LiveRecording from './pages/LiveRecording'
 import Settings from './pages/Settings'
 import SystemStatus from './pages/SystemStatus'
 
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const token = useAuthStore((s) => s.token)
+  const user = useAuthStore((s) => s.user)
+  const loading = useAuthStore((s) => s.loading)
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-950">
+        <div className="animate-pulse text-gray-400">Loading...</div>
+      </div>
+    )
+  }
+
+  if (!token || !user) {
+    return <Navigate to="/login" replace />
+  }
+
+  return <>{children}</>
+}
+
 export default function App() {
+  const checkAuth = useAuthStore((s) => s.checkAuth)
+  const checkHasUsers = useAuthStore((s) => s.checkHasUsers)
+  const token = useAuthStore((s) => s.token)
+  const user = useAuthStore((s) => s.user)
+  const hasUsers = useAuthStore((s) => s.hasUsers)
+  const loading = useAuthStore((s) => s.loading)
   const onboardingComplete = useAuthStore((s) => s.onboardingComplete)
+
+  useEffect(() => {
+    checkAuth()
+    checkHasUsers()
+  }, [checkAuth, checkHasUsers])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-950">
+        <div className="animate-pulse text-gray-400">Loading...</div>
+      </div>
+    )
+  }
 
   return (
     <ErrorBoundary>
@@ -21,23 +60,39 @@ export default function App() {
         <Toaster position="top-right" />
 
         <Routes>
-          {/* Onboarding — only accessible if not yet completed */}
+          {/* Onboarding — only accessible when no users exist */}
           <Route
             path="/onboarding"
             element={
-              onboardingComplete ? <Navigate to="/dashboard" /> : <Onboarding />
+              hasUsers === false ? <Onboarding /> : <Navigate to="/login" />
             }
           />
 
-          {/* Main app (protected by layout + onboarding check) */}
+          {/* Login */}
+          <Route
+            path="/login"
+            element={
+              hasUsers === false ? (
+                <Navigate to="/onboarding" />
+              ) : token && user ? (
+                <Navigate to="/dashboard" />
+              ) : (
+                <Login />
+              )
+            }
+          />
+
+          {/* Protected app routes */}
           <Route
             path="/"
             element={
-              !onboardingComplete ? (
-                <Navigate to="/onboarding" />
-              ) : (
-                <Layout />
-              )
+              <AuthGate>
+                {!onboardingComplete ? (
+                  <Navigate to="/onboarding" />
+                ) : (
+                  <Layout />
+                )}
+              </AuthGate>
             }
           >
             <Route index element={<Navigate to="/dashboard" />} />
@@ -49,7 +104,18 @@ export default function App() {
           </Route>
 
           {/* Catch-all */}
-          <Route path="*" element={<Navigate to="/dashboard" />} />
+          <Route
+            path="*"
+            element={
+              hasUsers === false ? (
+                <Navigate to="/onboarding" />
+              ) : token && user ? (
+                <Navigate to="/dashboard" />
+              ) : (
+                <Navigate to="/login" />
+              )
+            }
+          />
         </Routes>
       </BrowserRouter>
     </ErrorBoundary>

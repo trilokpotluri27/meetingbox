@@ -183,14 +183,15 @@ async def device_info():
     wifi = _get_wifi_info()
     disk = psutil.disk_usage("/")
 
-    # Count meetings
     meetings_count = 0
     try:
         conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM meetings")
-        meetings_count = cur.fetchone()[0]
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM meetings")
+            meetings_count = cur.fetchone()[0]
+        finally:
+            conn.close()
     except Exception:
         pass
 
@@ -330,13 +331,64 @@ async def install_update():
 
 
 # ======================================================================
-# INTEGRATIONS (placeholder)
+# INTEGRATIONS (delegates to /api/integrations router)
+# These thin wrappers exist because the frontend api/integrations.ts
+# and the device-ui api_client.py both call /api/device/integrations/*.
+# They forward to the real integrations module.
 # ======================================================================
 
+from fastapi import Depends
+from auth import get_current_user, get_optional_user
+
+
 @router.get("/integrations")
-async def list_integrations():
-    """List integration statuses."""
-    return [
-        {"id": "gmail", "name": "Gmail", "connected": False},
-        {"id": "calendar", "name": "Google Calendar", "connected": False},
+async def list_integrations(current_user: dict | None = Depends(get_optional_user)):
+    """List integration statuses (works for both authed and unauthed callers)."""
+    meta = [
+        {"id": "gmail", "name": "Gmail", "icon": "mail", "description": "Send AI-drafted emails"},
+        {"id": "calendar", "name": "Google Calendar", "icon": "calendar", "description": "Auto-schedule meetings"},
     ]
+    if not current_user:
+        return [{"connected": False, **m} for m in meta]
+
+    user_id = current_user["id"]
+    results = []
+    for m in meta:
+        conn = get_connection()
+        conn.row_factory = lambda c, r: {col[0]: r[i] for i, col in enumerate(c.description)}
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT email FROM integrations WHERE user_id = ? AND provider = ?",
+                (user_id, m["id"]),
+            )
+            row = cur.fetchone()
+        finally:
+            conn.close()
+        results.append({
+            **m,
+            "connected": row is not None,
+            "email": row["email"] if row else None,
+        })
+    return results
+
+
+@router.post("/integrations/{integration_id}/device-code")
+async def get_integration_device_code(integration_id: str, current_user: dict = Depends(get_current_user)):
+    """Proxy to the device code request in the integrations router."""
+    from routes.integrations import request_device_code
+    return await request_device_code(integration_id, current_user)
+
+
+@router.post("/integrations/{integration_id}/poll")
+async def poll_integration(integration_id: str, session_id: str = "", current_user: dict = Depends(get_current_user)):
+    """Proxy to the poll endpoint in the integrations router."""
+    from routes.integrations import poll_device_code
+    return await poll_device_code(integration_id, session_id, current_user)
+
+
+@router.post("/integrations/{integration_id}/disconnect")
+async def disconnect_integration(integration_id: str, current_user: dict = Depends(get_current_user)):
+    """Proxy to the real disconnect in the integrations router."""
+    from routes.integrations import disconnect_integration as real_disconnect
+    return await real_disconnect(integration_id, current_user)

@@ -8,14 +8,16 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
 from kivy.clock import Clock
 from async_helper import run_async
 
 from screens.base_screen import BaseScreen
 from components.status_bar import StatusBar
 from components.wifi_network_item import WiFiNetworkItem
-from components.button import SecondaryButton
-from config import COLORS, FONT_SIZES, SPACING
+from components.button import SecondaryButton, PrimaryButton
+from components.modal_dialog import ModalDialog
+from config import COLORS, FONT_SIZES, SPACING, BORDER_RADIUS
 
 
 class WiFiScreen(BaseScreen):
@@ -107,9 +109,95 @@ class WiFiScreen(BaseScreen):
     def _on_network(self, instance):
         if instance.network.get('connected'):
             return
+        net = instance.network
+        security = (net.get('security') or '').lower()
+        if security and security != 'open' and security != '--':
+            self._show_password_dialog(net['ssid'])
+        else:
+            self._connect_to_network(net['ssid'], password=None)
+
+    def _show_password_dialog(self, ssid):
+        from kivy.uix.floatlayout import FloatLayout
+        from kivy.graphics import Color, RoundedRectangle, Rectangle
+
+        overlay = FloatLayout()
+        with overlay.canvas.before:
+            Color(*COLORS['overlay'])
+            _bg = Rectangle(pos=overlay.pos, size=overlay.size)
+        overlay.bind(
+            pos=lambda w, v: setattr(_bg, 'pos', w.pos),
+            size=lambda w, v: setattr(_bg, 'size', w.size),
+        )
+
+        card = BoxLayout(
+            orientation='vertical',
+            size_hint=(None, None), size=(360, 220),
+            pos_hint={'center_x': 0.5, 'center_y': 0.5},
+            padding=16, spacing=10,
+        )
+        with card.canvas.before:
+            Color(*COLORS['surface'])
+            _cbg = RoundedRectangle(pos=card.pos, size=card.size, radius=[BORDER_RADIUS])
+        card.bind(
+            pos=lambda w, v: setattr(_cbg, 'pos', w.pos),
+            size=lambda w, v: setattr(_cbg, 'size', w.size),
+        )
+
+        title = Label(
+            text=f'Connect to {ssid}',
+            font_size=FONT_SIZES['title'], bold=True,
+            color=COLORS['white'], halign='left',
+            size_hint=(1, None), height=28,
+        )
+        title.bind(size=title.setter('text_size'))
+        card.add_widget(title)
+
+        hint = Label(
+            text='Enter WiFi password:',
+            font_size=FONT_SIZES['small'], color=COLORS['gray_400'],
+            halign='left', size_hint=(1, None), height=20,
+        )
+        hint.bind(size=hint.setter('text_size'))
+        card.add_widget(hint)
+
+        pwd_input = TextInput(
+            hint_text='Password',
+            password=True,
+            multiline=False,
+            font_size=FONT_SIZES['body'],
+            size_hint=(1, None), height=40,
+            background_color=COLORS['background'],
+            foreground_color=COLORS['white'],
+            cursor_color=COLORS['blue'],
+        )
+        card.add_widget(pwd_input)
+
+        btn_row = BoxLayout(size_hint=(1, None), height=50, spacing=SPACING['button_spacing'])
+        cancel_btn = SecondaryButton(text='CANCEL', size_hint=(0.5, 1))
+        connect_btn = PrimaryButton(text='CONNECT', size_hint=(0.5, 1))
+
+        def _dismiss(*_a):
+            if overlay.parent:
+                overlay.parent.remove_widget(overlay)
+
+        def _do_connect(*_a):
+            password = pwd_input.text.strip()
+            _dismiss()
+            self._connect_to_network(ssid, password=password or None)
+
+        cancel_btn.bind(on_press=_dismiss)
+        connect_btn.bind(on_press=_do_connect)
+        btn_row.add_widget(cancel_btn)
+        btn_row.add_widget(connect_btn)
+        card.add_widget(btn_row)
+
+        overlay.add_widget(card)
+        self.add_widget(overlay)
+
+    def _connect_to_network(self, ssid, password=None):
         async def _connect():
             try:
-                result = await self.backend.connect_wifi(instance.network['ssid'])
+                result = await self.backend.connect_wifi(ssid, password=password)
                 if result.get('status') == 'connected':
                     Clock.schedule_once(lambda _: self._load_networks(), 0)
             except Exception:
