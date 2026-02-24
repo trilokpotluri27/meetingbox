@@ -133,10 +133,16 @@ HTML_PAGE = """<!DOCTYPE html>
   <div class="checkmark">&#10003;</div>
   <h1>WiFi Configured!</h1>
   <p class="subtitle">MeetingBox is connecting to <strong id="connected-ssid"></strong> now.</p>
-  <p class="subtitle" style="margin-top:12px;">Setup is complete! You can close this page.</p>
-  <p class="subtitle" style="margin-top:20px; color:#AEAEB2;">Access your dashboard anytime at:</p>
-  <p style="text-align:center; margin-top:4px;">
-    <span class="url">meetingbox.local</span>
+  <p id="redirect-status" class="subtitle" style="margin-top:12px;">
+    Redirecting to dashboard in <strong id="countdown">15</strong>s...
+  </p>
+  <p style="text-align:center; margin-top:16px;">
+    <span class="url">meetingbox.local/setup</span>
+  </p>
+  <p id="redirect-fallback" class="note" style="display:none; margin-top:16px; color:#8E8E93; font-size:13px; text-align:center;">
+    Redirect not working? Make sure your phone reconnected to your WiFi, then
+    <a href="http://meetingbox.local/setup" style="color:#3888FA;">tap here</a>
+    or open <strong>http://meetingbox.local</strong> in your browser.
   </p>
 </div>
 
@@ -185,10 +191,10 @@ async function submitWifi(e) {
     });
     const data = await res.json();
     if (data.status === 'saved') {
-      // Show success card
       document.getElementById('setup-card').style.display = 'none';
       document.getElementById('connected-ssid').textContent = ssid;
       document.getElementById('success-card').style.display = 'block';
+      startRedirectCountdown();
     } else {
       status.className = 'status error';
       status.textContent = data.message || 'Failed to save. Please try again.';
@@ -201,6 +207,21 @@ async function submitWifi(e) {
     btn.disabled = false;
     btn.textContent = 'Connect';
   }
+}
+
+function startRedirectCountdown() {
+  var seconds = 15;
+  var el = document.getElementById('countdown');
+  var timer = setInterval(function() {
+    seconds--;
+    el.textContent = seconds;
+    if (seconds <= 0) {
+      clearInterval(timer);
+      document.getElementById('redirect-status').textContent = 'Redirecting now...';
+      document.getElementById('redirect-fallback').style.display = 'block';
+      window.location.href = 'http://meetingbox.local/setup';
+    }
+  }, 1000);
 }
 
 scanNetworks();
