@@ -343,11 +343,17 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
                     )
                     print("[Onboard] Hotspot stopped", flush=True)
 
-                    # Restart nginx now that onboarding is done and port 80 is no longer needed
+                    # Shut down the onboard HTTP server to free port 80
+                    print("[Onboard] Stopping onboard server...", flush=True)
+                    self.server.shutdown()
+                    time.sleep(1)
+
+                    # Start nginx for normal dashboard access
                     print("[Onboard] Starting nginx for normal operation...", flush=True)
                     subprocess.run(
-                        ["docker", "start", "meetingbox-nginx"],
-                        capture_output=True, text=True, timeout=30,
+                        ["docker", "compose", "up", "-d", "nginx"],
+                        capture_output=True, text=True, timeout=60,
+                        cwd=_PROJECT_ROOT,
                     )
                     print("[Onboard] Onboarding complete — nginx started", flush=True)
                 else:

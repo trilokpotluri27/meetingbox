@@ -55,10 +55,13 @@ echo "[2/8] Pulling latest code..."
 ACTUAL_USER=${SUDO_USER:-$USER}
 sudo -u "$ACTUAL_USER" git pull || echo "   (git pull skipped)"
 
+# Determine setup state early so steps 4-5 can adapt
+MARKER="$PROJECT_DIR/data/config/.setup_complete"
+
 # 3. Fresh onboarding reset
 if [ "$FRESH" = true ]; then
     echo "[3/8] Resetting onboarding state..."
-    rm -f "$PROJECT_DIR/data/config/.setup_complete"
+    rm -f "$MARKER"
     rm -f /opt/meetingbox/data/config/.setup_complete 2>/dev/null || true
 else
     echo "[3/8] Keeping existing setup state"
@@ -73,8 +76,13 @@ else
 fi
 
 # 5. Start backend services
-echo "[5/8] Starting backend services..."
-docker compose up -d
+if [ ! -f "$MARKER" ]; then
+    echo "[5/8] Starting backend services (onboarding mode — nginx skipped)..."
+    docker compose up -d redis audio transcription ai ollama web
+else
+    echo "[5/8] Starting backend services..."
+    docker compose up -d
+fi
 echo "       Waiting for services to initialise..."
 sleep 5
 
@@ -87,14 +95,10 @@ echo "[7/8] Starting device UI..."
 docker compose --profile screen up -d device-ui
 
 # 8. Start onboarding if setup not complete
-MARKER="$PROJECT_DIR/data/config/.setup_complete"
 if [ ! -f "$MARKER" ]; then
     echo "[8/8] Starting onboarding..."
 
-    # Stop nginx so the onboard server can bind port 80
-    echo "       Stopping nginx (frees port 80 for onboarding)..."
-    docker stop meetingbox-nginx 2>/dev/null || true
-    sleep 1
+    # nginx was intentionally not started in step 5, so port 80 is free
 
     # Start the HTTP server FIRST so it's ready when phones connect
     echo "       Starting onboard server on port 80..."
