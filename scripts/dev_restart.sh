@@ -91,6 +91,11 @@ MARKER="$PROJECT_DIR/data/config/.setup_complete"
 if [ ! -f "$MARKER" ]; then
     echo "[8/8] Starting onboarding..."
 
+    # Stop nginx so the onboard server can bind port 80
+    echo "       Stopping nginx (frees port 80 for onboarding)..."
+    docker stop meetingbox-nginx 2>/dev/null || true
+    sleep 1
+
     # Start the HTTP server FIRST so it's ready when phones connect
     echo "       Starting onboard server on port 80..."
     python3 "$PROJECT_DIR/scripts/onboard_server.py" &

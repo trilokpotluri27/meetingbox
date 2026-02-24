@@ -341,7 +341,15 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
                         ["bash", HOTSPOT_SCRIPT, "stop"],
                         capture_output=True, text=True, timeout=15,
                     )
-                    print("[Onboard] Hotspot stopped — onboarding complete", flush=True)
+                    print("[Onboard] Hotspot stopped", flush=True)
+
+                    # Restart nginx now that onboarding is done and port 80 is no longer needed
+                    print("[Onboard] Starting nginx for normal operation...", flush=True)
+                    subprocess.run(
+                        ["docker", "start", "meetingbox-nginx"],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    print("[Onboard] Onboarding complete — nginx started", flush=True)
                 else:
                     msg = connect_result.stderr.strip() or "Connection failed"
                     print(f"[Onboard] WiFi activation failed: {msg}", flush=True)
