@@ -34,7 +34,7 @@ class CompleteScreen(BaseScreen):
         self.status_bar = StatusBar(
             status_text='COMPLETE',
             status_color=COLORS['green'],
-            device_name='Conference Room A',
+            device_name='MeetingBox',
             show_settings=True,
         )
         root.add_widget(self.status_bar)
@@ -139,6 +139,8 @@ class CompleteScreen(BaseScreen):
 
     # ------------------------------------------------------------------
     def on_enter(self):
+        self.status_bar.device_label.text = getattr(self.app, 'device_name', 'MeetingBox')
+
         # Checkmark spring-in
         self.check_label.opacity = 0
         anim = Animation(opacity=1, duration=0.5)

@@ -447,10 +447,10 @@ class BackendClient:
                     async for message in ws:
                         try:
                             event = json.loads(message)
-                            # Backend broadcasts raw Redis events;
-                            # normalise to { type, data } if needed.
                             if 'type' in event:
                                 yield event
+                            elif 'segment_num' in event:
+                                yield {'type': 'audio_segment', 'data': event}
                             else:
                                 yield {'type': 'unknown', 'data': event}
                         except json.JSONDecodeError:

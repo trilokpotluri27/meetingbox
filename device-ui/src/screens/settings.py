@@ -74,7 +74,7 @@ class SettingsScreen(BaseScreen):
 
         self.device_name_item = SettingsItem(
             title='Device Name',
-            subtitle='Conference Room A',
+            subtitle='MeetingBox',
             mode='arrow',
             on_press=lambda _: None,  # edit via web
         )
@@ -280,7 +280,9 @@ class SettingsScreen(BaseScreen):
                     self.storage_item.subtitle_label.text = storage_text
                     self.firmware_item.subtitle_label.text = fw
                     self.uptime_item.subtitle_label.text = f'{up_d}d {up_h}h'
-                    self.device_name_item.subtitle_label.text = info.get('device_name', '?')
+                    name = info.get('device_name', 'MeetingBox')
+                    self.device_name_item.subtitle_label.text = name
+                    self.app.device_name = name
 
                     # Footer
                     wifi_ok = bool(info.get('wifi_ssid'))

@@ -146,6 +146,46 @@ Routes that are NOT called by the device-ui (e.g., auth routes, upload-audio) ca
 - `services/web/routes/meetings.py` -- list, detail, delete, summarize endpoints
 - `services/web/routes/actions.py` -- list, update, approve, dismiss, execute endpoints
 
+### 2026-02-24: Device Name Hardcoded as "Conference Room A" (FIXED)
+**Problem**: The status bar on home, recording, processing, complete, and settings screens all had "Conference Room A" hardcoded. The device name set via the web frontend was never pulled.
+
+**Fix**: Default changed to "MeetingBox". On startup, `_check_backend()` fetches device settings and sets `app.device_name`. Each screen's `on_enter()` updates the status bar's `device_label.text` from `app.device_name`. Settings screen also syncs it back when loading system info.
+
+**Files changed**:
+- `device-ui/src/main.py` -- added `self.device_name`, fetch in `_check_backend()`
+- `device-ui/src/screens/home.py` -- dynamic update in `on_enter()`
+- `device-ui/src/screens/recording.py` -- dynamic update in `on_enter()`
+- `device-ui/src/screens/processing.py` -- dynamic update in `on_enter()`
+- `device-ui/src/screens/complete.py` -- dynamic update in `on_enter()`
+- `device-ui/src/screens/settings.py` -- syncs `app.device_name` on load
+
+### 2026-02-24: Stop Button Not Working on Device (FIXED)
+**Problem**: `stop_recording()` in `main.py` had `if not self.current_session_id: return` which silently aborted the stop if session_id was not set. The backend API reads session_id from Redis and doesn't need it from the client.
+
+**Fix**: Removed the `self.current_session_id` guard so the stop API call always fires. Added diagnostic logging to `_on_stop`, `_do_stop`, and `stop_recording`.
+
+**Files changed**:
+- `device-ui/src/main.py` -- removed guard in `stop_recording()`
+- `device-ui/src/screens/recording.py` -- added logging to stop flow
+
+### 2026-02-24: Processing Screen Stuck Forever (FIXED)
+**Problem**: The transcription service publishes `transcription_complete` events, but the device-ui's WebSocket dispatch table only listened for `processing_complete` (which no service ever publishes). The device-ui never knew transcription was done.
+
+**Fix**: Added `transcription_complete` to the WebSocket dispatch table. When received, updates the processing progress bar to 80% and triggers `_auto_summarize()` to generate the meeting summary.
+
+**Files changed**:
+- `device-ui/src/main.py` -- added `on_transcription_complete` handler + dispatch entry
+
+### 2026-02-24: No Live Feedback During Recording (FIXED)
+**Problem**: The recording screen showed "Waiting for speech…" forever because no service publishes `transcription_update` events during recording. Real-time streaming transcription is not implemented. The audio service publishes `audio_segments` events but the device-ui ignored them.
+
+**Fix**: Added `audio_segment` event detection in `api_client.py` (events without a `type` field but with `segment_num` are classified as `audio_segment`). Added dispatch handler `on_audio_segment` in `main.py` and `RecordingScreen` to show "Audio captured — N segments processed" as segments are saved.
+
+**Files changed**:
+- `device-ui/src/api_client.py` -- classify segment events as `audio_segment`
+- `device-ui/src/main.py` -- added `on_audio_segment` handler + dispatch entry
+- `device-ui/src/screens/recording.py` -- added `on_audio_segment()` + changed default text
+
 ## Error Handling Pattern
 
 The device-ui swallows most API errors silently:
@@ -165,7 +205,9 @@ The device-ui subscribes to `ws://web:8000/ws` and dispatches these event types:
 | `recording_stopped` | `on_recording_stopped()` | Navigate to processing screen |
 | `recording_paused` | `on_recording_paused()` | Update recording screen to paused |
 | `recording_resumed` | `on_recording_resumed()` | Resume recording screen |
-| `transcription_update` | `on_transcription_update()` | Update live captions |
+| `transcription_update` | `on_transcription_update()` | Update live captions (future: real-time ASR) |
+| `transcription_complete` | `on_transcription_complete()` | Trigger auto-summarize after transcription |
+| `audio_segment` | `on_audio_segment()` | Show segment count on recording screen |
 | `processing_started` | `on_processing_started()` | Show meeting info on processing screen |
 | `processing_progress` | `on_processing_progress()` | Update progress bar |
 | `processing_complete` | `on_processing_complete()` | Trigger auto-summarize |
@@ -173,3 +215,17 @@ The device-ui subscribes to `ws://web:8000/ws` and dispatches these event types:
 | `setup_complete` | `on_setup_complete()` | Advance from onboarding to all_set |
 | `update_progress` | `on_update_progress()` | Update firmware install progress |
 | `error` | `on_error_event()` | Show error screen |
+
+### Event Flow (Recording Lifecycle)
+```
+User taps START -> POST /api/meetings/start -> Audio service starts
+                                             -> publishes recording_started (events channel)
+                                             -> publishes audio_segment (audio_segments channel) per segment
+
+User taps STOP  -> POST /api/meetings/stop  -> Audio service stops
+                                             -> publishes recording_stopped (events channel)
+                                             -> Transcription service picks up recording_stopped
+                                             -> Runs Whisper, publishes transcription_complete (events channel)
+                                             -> Device triggers _auto_summarize (API call)
+                                             -> Summary shown on summary_review screen
+```

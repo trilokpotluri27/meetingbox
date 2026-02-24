@@ -50,7 +50,7 @@ class HomeScreen(BaseScreen):
         self.status_bar = StatusBar(
             status_text='READY',
             status_color=COLORS['green'],
-            device_name='Conference Room A',
+            device_name='MeetingBox',
             show_settings=True,
         )
         root.add_widget(self.status_bar)
@@ -129,6 +129,7 @@ class HomeScreen(BaseScreen):
     # Lifecycle
     # ------------------------------------------------------------------
     def on_enter(self):
+        self.status_bar.device_label.text = getattr(self.app, 'device_name', 'MeetingBox')
         self._load_last_meeting()
         self._load_system_status()
         self._apply_privacy_mode()

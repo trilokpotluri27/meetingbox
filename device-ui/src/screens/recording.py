@@ -22,6 +22,7 @@ Layout (top → bottom):
 └──────────────────────────────────────────────────┘
 """
 
+import logging
 import random
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
@@ -35,6 +36,8 @@ from components.status_bar import StatusBar
 from components.modal_dialog import ModalDialog
 from config import COLORS, FONT_SIZES, SPACING, BORDER_RADIUS
 from async_helper import run_async
+
+logger = logging.getLogger(__name__)
 
 
 class _WaveformWidget(Widget):
@@ -105,7 +108,7 @@ class RecordingScreen(BaseScreen):
         self.status_bar = StatusBar(
             status_text='RECORDING',
             status_color=COLORS['red'],
-            device_name='Conference Room A',
+            device_name='MeetingBox',
             pulsing=True,
             show_settings=True,
         )
@@ -192,7 +195,7 @@ class RecordingScreen(BaseScreen):
         self._is_paused = False
         self.elapsed_seconds = 0
         self.transcript_lines = []
-        self.caption_label.text = 'Waiting for speech…'
+        self.caption_label.text = 'Listening…'
         self.timer_label.text = '00:00'
         self.waveform.set_active(True)
 
@@ -200,6 +203,7 @@ class RecordingScreen(BaseScreen):
         self.waveform_event = Clock.schedule_interval(
             lambda _dt: self.waveform.update_levels(), 0.1)
 
+        self.status_bar.device_label.text = getattr(self.app, 'device_name', 'MeetingBox')
         self.status_bar.status_text = 'RECORDING'
         self.status_bar.status_color = COLORS['red']
         self.status_bar.start_pulse()
@@ -268,6 +272,7 @@ class RecordingScreen(BaseScreen):
     # ------------------------------------------------------------------
     def _on_stop(self, _inst):
         dur = self.timer_label.text
+        logger.info("Stop button pressed (duration: %s)", dur)
         dialog = ModalDialog(
             title='Stop Recording?',
             message=f'Meeting: {dur}',
@@ -279,6 +284,7 @@ class RecordingScreen(BaseScreen):
         self.add_widget(dialog)
 
     def _do_stop(self):
+        logger.info("Stop confirmed via modal")
         self.app.stop_recording()
 
     # ------------------------------------------------------------------
@@ -295,6 +301,12 @@ class RecordingScreen(BaseScreen):
         if len(self.transcript_lines) > 4:
             self.transcript_lines = self.transcript_lines[-4:]
         self.caption_label.text = '\n'.join(self.transcript_lines)
+
+    def on_audio_segment(self, segment_num: int):
+        if self._is_paused:
+            return
+        count = segment_num + 1
+        self.caption_label.text = f'Audio captured — {count} segment{"s" if count != 1 else ""} processed'
 
     # ------------------------------------------------------------------
     # Privacy

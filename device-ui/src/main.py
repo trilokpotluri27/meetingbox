@@ -134,6 +134,7 @@ class MeetingBoxApp(App):
             'live_caption': '',
         }
         self.privacy_mode = DEFAULT_PRIVACY_MODE
+        self.device_name = 'MeetingBox'
 
         # Screen manager & nav stack
         self.screen_manager = None
@@ -251,6 +252,15 @@ class MeetingBoxApp(App):
             ok = await self.backend.health_check()
             if not ok:
                 logger.error("Backend health check failed")
+                return
+            try:
+                settings = await self.backend.get_settings()
+                name = settings.get('device_name', 'MeetingBox')
+                if name:
+                    self.device_name = name
+                    logger.info("Device name loaded: %s", name)
+            except Exception as e:
+                logger.warning("Could not load device name: %s", e)
         run_async(_health())
 
     # ==================================================================
@@ -339,6 +349,8 @@ class MeetingBoxApp(App):
                     'recording_paused': self.on_recording_paused,
                     'recording_resumed': self.on_recording_resumed,
                     'transcription_update': self.on_transcription_update,
+                    'transcription_complete': self.on_transcription_complete,
+                    'audio_segment': self.on_audio_segment,
                     'processing_started': self.on_processing_started,
                     'processing_progress': self.on_processing_progress,
                     'processing_complete': self.on_processing_complete,
@@ -393,6 +405,15 @@ class MeetingBoxApp(App):
             Clock.schedule_once(
                 lambda _: screen.on_transcription_update(text, speaker), 0)
 
+    def on_audio_segment(self, data):
+        seg_data = data if 'segment_num' in data else data.get('data', {})
+        seg_num = seg_data.get('segment_num', 0)
+        self.recording_state['speaker_count'] = seg_num + 1
+        screen = self.screen_manager.get_screen('recording')
+        if hasattr(screen, 'on_audio_segment'):
+            Clock.schedule_once(
+                lambda _: screen.on_audio_segment(seg_num), 0)
+
     def on_processing_started(self, data):
         screen = self.screen_manager.get_screen('processing')
         if hasattr(screen, 'on_processing_started'):
@@ -409,13 +430,26 @@ class MeetingBoxApp(App):
         if eta and hasattr(screen, 'set_eta'):
             screen.set_eta(eta)
 
+    def on_transcription_complete(self, data):
+        meeting_id = data.get('meeting_id')
+        logger.info("Transcription complete for meeting %s", meeting_id)
+
+        def _update_status(_dt):
+            screen = self.screen_manager.get_screen('processing')
+            if hasattr(screen, 'on_progress_update'):
+                screen.on_progress_update(80, 'Transcription done. Generating summary…')
+
+        Clock.schedule_once(_update_status, 0)
+        if meeting_id:
+            self._auto_summarize(meeting_id)
+
     def on_processing_complete(self, data):
         meeting_id = data.get('meeting_id')
 
         def _update_status(_dt):
             screen = self.screen_manager.get_screen('processing')
             if hasattr(screen, 'on_progress_update'):
-                screen.on_progress_update(100, 'Generating summary...')
+                screen.on_progress_update(100, 'Generating summary…')
 
         Clock.schedule_once(_update_status, 0)
         self._auto_summarize(meeting_id)
@@ -522,12 +556,12 @@ class MeetingBoxApp(App):
         run_async(_start())
 
     def stop_recording(self):
-        if not self.current_session_id:
-            return
+        logger.info("stop_recording called, session_id=%s", self.current_session_id)
         async def _stop():
             try:
                 await self.backend.stop_recording(self.current_session_id)
                 self.recording_state['active'] = False
+                logger.info("Recording stopped successfully")
                 Clock.schedule_once(
                     lambda _: self.goto_screen('processing', 'fade'), 0)
             except Exception as e:

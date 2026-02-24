@@ -30,7 +30,7 @@ class ProcessingScreen(BaseScreen):
         self.status_bar = StatusBar(
             status_text='PROCESSING',
             status_color=COLORS['yellow'],
-            device_name='Conference Room A',
+            device_name='MeetingBox',
             show_settings=True,
         )
         root.add_widget(self.status_bar)
@@ -127,6 +127,7 @@ class ProcessingScreen(BaseScreen):
 
     # Privacy
     def on_enter(self):
+        self.status_bar.device_label.text = getattr(self.app, 'device_name', 'MeetingBox')
         privacy = getattr(self.app, 'privacy_mode', False)
         if privacy:
             self.status_bar.status_text = 'PROCESSING (Local)'
