@@ -386,7 +386,7 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
                         capture_output=True, text=True, timeout=10,
                     )
 
-            threading.Thread(target=delayed_wifi_switch, daemon=True).start()
+            threading.Thread(target=delayed_wifi_switch, daemon=False).start()
 
         except Exception as e:
             print(f"[Onboard] Error: {e}", flush=True)
