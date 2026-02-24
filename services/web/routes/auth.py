@@ -3,11 +3,13 @@ Authentication Routes -- register, login, user management.
 """
 
 import logging
+import time
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
 from auth import (
@@ -23,6 +25,11 @@ from database import get_connection
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Simple in-memory rate limiter for registration (IP -> list of timestamps)
+_register_attempts: dict[str, list[float]] = defaultdict(list)
+_REGISTER_LIMIT = 5  # max registrations per IP
+_REGISTER_WINDOW = 3600  # per hour
 
 
 class RegisterRequest(BaseModel):
@@ -73,20 +80,30 @@ def _user_response(user_id: str, username: str, display_name: str, role: str, on
 @router.post("/setup")
 async def setup_first_user(body: RegisterRequest):
     """Create the first admin user. Only works when no users exist."""
-    if count_users() > 0:
-        raise HTTPException(status_code=400, detail="Setup already completed. Use /login.")
-
     user_id = str(uuid.uuid4())
     now = datetime.utcnow().isoformat()
     hashed = hash_password(body.password)
 
     conn = get_connection()
     try:
+        # Use BEGIN IMMEDIATE to serialize concurrent setup attempts
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        if cur.fetchone()[0] > 0:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail="Setup already completed. Use /login.")
+
         conn.execute(
             "INSERT INTO users (id, username, password_hash, display_name, role, onboarding_complete, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (user_id, body.username, hashed, body.display_name or body.username, "admin", 0, now),
         )
         conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -99,8 +116,16 @@ async def setup_first_user(body: RegisterRequest):
 
 
 @router.post("/register")
-async def register(body: RegisterRequest):
-    """Self-register a new user. Open to anyone on the network."""
+async def register(body: RegisterRequest, request: Request):
+    """Self-register a new user. Rate-limited to prevent abuse."""
+    # Rate limit by client IP
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    _register_attempts[client_ip] = [t for t in _register_attempts[client_ip] if now - t < _REGISTER_WINDOW]
+    if len(_register_attempts[client_ip]) >= _REGISTER_LIMIT:
+        raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
+    _register_attempts[client_ip].append(now)
+
     if get_user_by_username(body.username):
         raise HTTPException(status_code=409, detail="Username already taken")
 

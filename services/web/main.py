@@ -116,7 +116,7 @@ app = FastAPI(title="MeetingBox API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
   CORSMiddleware,
   allow_origins=["*"],
-  allow_credentials=True,
+  allow_credentials=False,
   allow_methods=["*"],
   allow_headers=["*"],
 )
@@ -144,12 +144,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     manager.disconnect(websocket)
 
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
-
 @app.get("/health")
 async def health() -> dict:
   return {"status": "healthy", "service": "meetingbox-web"}
+
+
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 
 if __name__ == "__main__":

@@ -36,18 +36,14 @@ export default function MeetingDetailPage() {
       setLoading(true)
       const meetingData = await meetingsApi.get(id)
 
-      // The backend may return { meeting, segments, summary, local_summary }
-      // or may return a flat MeetingDetail — handle both shapes
+      // Backend always returns { meeting, segments, summary, local_summary }
       const raw = meetingData as unknown as Record<string, unknown>
-      const normalized: MeetingDetailType =
-        'meeting' in raw
-          ? {
-              ...(raw.meeting as MeetingDetailType),
-              segments: (raw.segments as MeetingDetailType['segments']) ?? [],
-              summary: (raw.summary as MeetingDetailType['summary']) ?? null,
-              local_summary: (raw.local_summary as MeetingDetailType['local_summary']) ?? null,
-            }
-          : meetingData
+      const normalized: MeetingDetailType = {
+        ...(raw.meeting as MeetingDetailType),
+        segments: (raw.segments as MeetingDetailType['segments']) ?? [],
+        summary: (raw.summary as MeetingDetailType['summary']) ?? null,
+        local_summary: (raw.local_summary as MeetingDetailType['local_summary']) ?? null,
+      }
 
       setMeeting(normalized)
 

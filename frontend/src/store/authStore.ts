@@ -16,7 +16,7 @@ interface AuthState {
   loading: boolean
 
   initialize: () => Promise<void>
-  login: (username: string, password: string) => Promise<void>
+  login: (username: string, password: string) => Promise<{ token: string; user: User }>
   register: (username: string, password: string, displayName: string) => Promise<void>
   logout: () => void
   setAuthFromSetup: (token: string, user: User) => void
@@ -63,7 +63,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: async (username: string, password: string) => {
     const { data } = await apiClient.post('/api/auth/login', { username, password })
     localStorage.setItem('auth_token', data.token)
-    set({ token: data.token, user: data.user })
+    set({ token: data.token, user: data.user, hasUsers: true })
+    return data
   },
 
   register: async (username: string, password: string, displayName: string) => {

@@ -9,12 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 import redis
 import shutil
 import httpx
 
+from auth import get_current_user, get_optional_user
 from database import get_connection
 from routes.actions import extract_actions_from_summary
 
@@ -39,7 +40,15 @@ LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "phi3:mini")
 
 router = APIRouter()
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
+_redis_client = None
+
+def _get_redis() -> redis.Redis:
+  """Lazy Redis connection — created on first use, not at import time."""
+  global _redis_client
+  if _redis_client is None:
+    _redis_client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
+  return _redis_client
+
 RECORDINGS_DIR = Path("/data/audio/recordings")
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -151,67 +160,67 @@ class MeetingDetail(BaseModel):
 # --- Start / Stop meeting (wire to Redis for audio service) ---
 
 @router.post("/start")
-async def start_meeting():
+async def start_meeting(current_user: dict = Depends(get_current_user)):
   """Start a new recording. Sends command to audio service via Redis."""
   session_id = _generate_session_id()
-  REDIS.publish("commands", json.dumps({"action": "start_recording", "session_id": session_id}))
-  REDIS.set("current_meeting_id", session_id)
-  REDIS.set("recording_state", "recording")
+  _get_redis().publish("commands", json.dumps({"action": "start_recording", "session_id": session_id}))
+  _get_redis().set("current_meeting_id", session_id)
+  _get_redis().set("recording_state", "recording")
   return {"session_id": session_id, "status": "recording_started"}
 
 
 @router.post("/stop")
-async def stop_meeting():
+async def stop_meeting(current_user: dict = Depends(get_current_user)):
   """Stop the current recording. Sends command to audio service via Redis."""
-  session_id = REDIS.get("current_meeting_id")
-  REDIS.publish(
+  session_id = _get_redis().get("current_meeting_id")
+  _get_redis().publish(
     "commands",
     json.dumps({"action": "stop_recording", "session_id": session_id}),
   )
-  REDIS.set("recording_state", "processing")
+  _get_redis().set("recording_state", "processing")
   if session_id:
-    REDIS.delete("current_meeting_id")
+    _get_redis().delete("current_meeting_id")
   return {"session_id": session_id, "status": "recording_stopped"}
 
 
 @router.get("/recording-status")
-async def recording_status():
+async def recording_status(current_user: dict = Depends(get_current_user)):
   """Current recording state for the dashboard."""
-  state = REDIS.get("recording_state") or "idle"
-  current_id = REDIS.get("current_meeting_id")
+  state = _get_redis().get("recording_state") or "idle"
+  current_id = _get_redis().get("current_meeting_id")
   return {"state": state, "session_id": current_id}
 
 
 @router.post("/reset-recording-state")
-async def reset_recording_state():
+async def reset_recording_state(current_user: dict = Depends(get_current_user)):
   """Clear recording state so the dashboard shows Start/Record buttons again (e.g. if stuck on Processing)."""
-  REDIS.set("recording_state", "idle")
-  REDIS.delete("current_meeting_id")
+  _get_redis().set("recording_state", "idle")
+  _get_redis().delete("current_meeting_id")
   return {"status": "idle"}
 
 
 @router.post("/pause")
-async def pause_meeting():
+async def pause_meeting(current_user: dict = Depends(get_current_user)):
   """Pause the current recording (stub -- audio service does not yet support pause)."""
-  state = REDIS.get("recording_state") or "idle"
+  state = _get_redis().get("recording_state") or "idle"
   if state != "recording":
     raise HTTPException(status_code=400, detail="No active recording to pause")
-  REDIS.set("recording_state", "paused")
+  _get_redis().set("recording_state", "paused")
   return {"status": "paused"}
 
 
 @router.post("/resume")
-async def resume_meeting():
+async def resume_meeting(current_user: dict = Depends(get_current_user)):
   """Resume a paused recording (stub -- audio service does not yet support resume)."""
-  state = REDIS.get("recording_state") or "idle"
+  state = _get_redis().get("recording_state") or "idle"
   if state != "paused":
     raise HTTPException(status_code=400, detail="No paused recording to resume")
-  REDIS.set("recording_state", "recording")
+  _get_redis().set("recording_state", "recording")
   return {"status": "recording"}
 
 
 @router.delete("/{meeting_id}")
-async def delete_meeting(meeting_id: str):
+async def delete_meeting(meeting_id: str, current_user: dict = Depends(get_current_user)):
   """Delete a meeting and all its associated data."""
   conn = get_connection()
   conn.execute("PRAGMA foreign_keys = ON")
@@ -243,7 +252,7 @@ async def delete_meeting(meeting_id: str):
 # --- Test WAV ingest (bypass mic: feed a WAV file into transcription → AI pipeline) ---
 
 @router.post("/test/ingest-wav")
-async def ingest_test_wav(file: UploadFile = File(...)):
+async def ingest_test_wav(file: UploadFile = File(...), current_user: dict | None = Depends(get_optional_user)):
   """
   Upload a WAV file to run through the full pipeline (transcription → summary).
   Use this to test without a microphone. Session ID is derived from filename or timestamp.
@@ -259,7 +268,7 @@ async def ingest_test_wav(file: UploadFile = File(...)):
     raise HTTPException(status_code=500, detail=str(e))
 
   # Emit the same event the audio service would: transcription service will pick it up
-  REDIS.publish(
+  _get_redis().publish(
     "events",
     json.dumps({
       "type": "recording_stopped",
@@ -294,7 +303,7 @@ def _ensure_16k_mono_wav(source: Path, dest: Path) -> None:
 
 
 @router.post("/upload-audio")
-async def upload_audio(file: UploadFile = File(...)):
+async def upload_audio(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
   """
   Upload audio from your computer (e.g. browser recording). Accepts WAV, WebM, OGG, MP4.
   Converts to 16kHz mono WAV and runs the same pipeline (transcription → summary).
@@ -311,6 +320,8 @@ async def upload_audio(file: UploadFile = File(...)):
     tmp_path = Path(tmp.name)
   try:
     content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+      raise HTTPException(status_code=413, detail=f"File too large. Maximum upload size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.")
     tmp_path.write_bytes(content)
     _ensure_16k_mono_wav(tmp_path, dest_wav)
   except subprocess.CalledProcessError as e:
@@ -321,9 +332,9 @@ async def upload_audio(file: UploadFile = File(...)):
   finally:
     tmp_path.unlink(missing_ok=True)
 
-  REDIS.set("recording_state", "processing")
-  REDIS.set("current_meeting_id", session_id)
-  REDIS.publish(
+  _get_redis().set("recording_state", "processing")
+  _get_redis().set("current_meeting_id", session_id)
+  _get_redis().publish(
     "events",
     json.dumps({
       "type": "recording_stopped",
@@ -336,7 +347,7 @@ async def upload_audio(file: UploadFile = File(...)):
 
 
 @router.get("/", response_model=List[MeetingResponse])
-async def list_meetings(limit: int = 50, offset: int = 0, status: Optional[str] = None):
+async def list_meetings(limit: int = 50, offset: int = 0, status: Optional[str] = None, current_user: dict = Depends(get_current_user)):
   conn = get_connection()
   conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}  # type: ignore
@@ -357,7 +368,7 @@ async def list_meetings(limit: int = 50, offset: int = 0, status: Optional[str] 
 
 
 @router.post("/{meeting_id}/summarize")
-async def summarize_meeting(meeting_id: str):
+async def summarize_meeting(meeting_id: str, current_user: dict = Depends(get_current_user)):
   """Generate an AI summary for a transcribed meeting using Claude."""
   client = _get_anthropic_client()
   if not client:
@@ -493,7 +504,7 @@ async def summarize_meeting(meeting_id: str):
 
 
 @router.post("/{meeting_id}/summarize-local")
-async def summarize_meeting_local(meeting_id: str):
+async def summarize_meeting_local(meeting_id: str, current_user: dict = Depends(get_current_user)):
   """Generate a summary using the local Ollama LLM (no API key needed)."""
   conn = get_connection()
   conn.execute("PRAGMA foreign_keys = ON")
@@ -668,7 +679,7 @@ async def summarize_meeting_local(meeting_id: str):
 
 
 @router.get("/{meeting_id}", response_model=MeetingDetail)
-async def get_meeting(meeting_id: str):
+async def get_meeting(meeting_id: str, current_user: dict = Depends(get_current_user)):
   conn = get_connection()
   conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}  # type: ignore

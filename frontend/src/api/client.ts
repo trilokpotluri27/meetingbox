@@ -28,8 +28,12 @@ client.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('auth_token')
-      window.location.href = '/login'
+      const url = error.config?.url || ''
+      // Don't redirect during auth initialization — let authStore handle cleanup
+      if (!url.includes('/api/auth/me') && !url.includes('/api/auth/has-users')) {
+        localStorage.removeItem('auth_token')
+        window.location.href = '/login'
+      }
     } else if (error.response?.status >= 500) {
       toast.error('Server error. Please try again later.')
     } else if (!error.response) {

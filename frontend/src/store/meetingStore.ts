@@ -30,13 +30,13 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
 
   startRecording: async () => {
     const result = await meetingsApi.start()
-    get().fetchMeetings()
+    await get().fetchMeetings()
     return result.session_id
   },
 
   stopRecording: async () => {
     await meetingsApi.stop()
-    get().fetchMeetings()
+    await get().fetchMeetings()
   },
 
   deleteMeeting: async (id: string) => {

@@ -32,18 +32,6 @@ export const meetingsApi = {
     return response.data
   },
 
-  // Pause recording
-  pause: async (): Promise<{ status: string }> => {
-    const response = await client.post('/api/meetings/pause')
-    return response.data
-  },
-
-  // Resume recording
-  resume: async (): Promise<{ status: string }> => {
-    const response = await client.post('/api/meetings/resume')
-    return response.data
-  },
-
   // Get recording status
   getRecordingStatus: async (): Promise<{
     state: string

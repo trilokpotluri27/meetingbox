@@ -13,134 +13,136 @@ def init_database() -> None:
     db_dir.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS meetings (
-          id TEXT PRIMARY KEY,
-          title TEXT,
-          start_time TEXT,
-          end_time TEXT,
-          duration INTEGER,
-          audio_path TEXT,
-          status TEXT,
-          created_at TEXT
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS segments (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          meeting_id TEXT,
-          segment_num INTEGER,
-          start_time REAL,
-          end_time REAL,
-          text TEXT,
-          speaker_id TEXT,
-          confidence REAL,
-          FOREIGN KEY (meeting_id) REFERENCES meetings(id)
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS summaries (
-          meeting_id TEXT PRIMARY KEY,
-          summary TEXT,
-          action_items TEXT,
-          decisions TEXT,
-          topics TEXT,
-          sentiment TEXT,
-          generated_at TEXT,
-          FOREIGN KEY (meeting_id) REFERENCES meetings(id)
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS local_summaries (
-          meeting_id TEXT PRIMARY KEY,
-          summary TEXT,
-          action_items TEXT,
-          decisions TEXT,
-          topics TEXT,
-          sentiment TEXT,
-          model_name TEXT,
-          generated_at TEXT,
-          FOREIGN KEY (meeting_id) REFERENCES meetings(id)
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-          id TEXT PRIMARY KEY,
-          username TEXT UNIQUE NOT NULL,
-          password_hash TEXT NOT NULL,
-          display_name TEXT,
-          role TEXT DEFAULT 'user',
-          onboarding_complete INTEGER DEFAULT 0,
-          created_at TEXT
-        )
-        """
-    )
-
-    # Migration: add onboarding_complete to existing users tables
     try:
-        cursor.execute("ALTER TABLE users ADD COLUMN onboarding_complete INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
+        cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS actions (
-          id TEXT PRIMARY KEY,
-          meeting_id TEXT NOT NULL,
-          type TEXT NOT NULL,
-          title TEXT,
-          assignee TEXT,
-          confidence REAL,
-          draft TEXT,
-          status TEXT DEFAULT 'pending',
-          executed_at TEXT,
-          created_at TEXT,
-          FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS meetings (
+              id TEXT PRIMARY KEY,
+              title TEXT,
+              start_time TEXT,
+              end_time TEXT,
+              duration INTEGER,
+              audio_path TEXT,
+              status TEXT,
+              created_at TEXT
+            )
+            """
         )
-        """
-    )
 
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS integrations (
-          id TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL,
-          provider TEXT NOT NULL,
-          scopes TEXT,
-          access_token TEXT,
-          refresh_token TEXT,
-          token_expiry TEXT,
-          email TEXT,
-          connected_at TEXT,
-          FOREIGN KEY (user_id) REFERENCES users(id)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS segments (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              meeting_id TEXT,
+              segment_num INTEGER,
+              start_time REAL,
+              end_time REAL,
+              text TEXT,
+              speaker_id TEXT,
+              confidence REAL,
+              FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+            )
+            """
         )
-        """
-    )
 
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_integrations_user_provider ON integrations(user_id, provider)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_segments_meeting_id ON segments(meeting_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meetings_created_at ON meetings(created_at)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_meeting_id ON actions(meeting_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS summaries (
+              meeting_id TEXT PRIMARY KEY,
+              summary TEXT,
+              action_items TEXT,
+              decisions TEXT,
+              topics TEXT,
+              sentiment TEXT,
+              generated_at TEXT,
+              FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+            )
+            """
+        )
 
-    conn.commit()
-    conn.close()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS local_summaries (
+              meeting_id TEXT PRIMARY KEY,
+              summary TEXT,
+              action_items TEXT,
+              decisions TEXT,
+              topics TEXT,
+              sentiment TEXT,
+              model_name TEXT,
+              generated_at TEXT,
+              FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+              id TEXT PRIMARY KEY,
+              username TEXT UNIQUE NOT NULL,
+              password_hash TEXT NOT NULL,
+              display_name TEXT,
+              role TEXT DEFAULT 'user',
+              onboarding_complete INTEGER DEFAULT 0,
+              created_at TEXT
+            )
+            """
+        )
+
+        # Migration: add onboarding_complete to existing users tables
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN onboarding_complete INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS actions (
+              id TEXT PRIMARY KEY,
+              meeting_id TEXT NOT NULL,
+              type TEXT NOT NULL,
+              title TEXT,
+              assignee TEXT,
+              confidence REAL,
+              draft TEXT,
+              status TEXT DEFAULT 'pending',
+              executed_at TEXT,
+              created_at TEXT,
+              FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS integrations (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              provider TEXT NOT NULL,
+              scopes TEXT,
+              access_token TEXT,
+              refresh_token TEXT,
+              token_expiry TEXT,
+              email TEXT,
+              connected_at TEXT,
+              FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            """
+        )
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_integrations_user_provider ON integrations(user_id, provider)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_segments_meeting_id ON segments(meeting_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_meetings_created_at ON meetings(created_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_meeting_id ON actions(meeting_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status)")
+
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_connection() -> sqlite3.Connection:

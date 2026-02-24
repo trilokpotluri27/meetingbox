@@ -10,12 +10,14 @@ Env vars required:
   GOOGLE_CLIENT_SECRET  -- from Google Cloud Console
 """
 
+import json
 import logging
 import os
 import uuid
 from datetime import datetime
 
 import httpx
+import redis
 from fastapi import APIRouter, Depends, HTTPException
 
 from auth import get_current_user
@@ -27,6 +29,7 @@ router = APIRouter()
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 
 DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -44,18 +47,35 @@ SCOPES_BY_PROVIDER = {
     ]),
 }
 
-# Active device-code sessions: session_id -> {user_id, provider, device_code, interval, expires_at}
-_pending_sessions: dict[str, dict] = {}
+# OAuth sessions stored in Redis with key pattern: oauth_session:{session_id}
+_OAUTH_SESSION_PREFIX = "oauth_session:"
+_redis_client = None
 
 
-def _cleanup_expired_sessions():
-    """Remove sessions whose device codes have expired."""
-    now = datetime.utcnow().timestamp()
-    expired = [sid for sid, s in _pending_sessions.items() if now > s["expires_at"]]
-    for sid in expired:
-        _pending_sessions.pop(sid, None)
-    if expired:
-        logger.debug("Cleaned up %d expired device-code sessions", len(expired))
+def _get_redis() -> redis.Redis:
+    """Lazy Redis connection for OAuth session storage."""
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
+    return _redis_client
+
+
+def _store_session(session_id: str, data: dict, ttl_seconds: int) -> None:
+    """Store an OAuth session in Redis with automatic expiry."""
+    _get_redis().setex(f"{_OAUTH_SESSION_PREFIX}{session_id}", ttl_seconds, json.dumps(data))
+
+
+def _get_session(session_id: str) -> dict | None:
+    """Retrieve an OAuth session from Redis. Returns None if expired/missing."""
+    raw = _get_redis().get(f"{_OAUTH_SESSION_PREFIX}{session_id}")
+    if raw is None:
+        return None
+    return json.loads(raw)
+
+
+def _delete_session(session_id: str) -> None:
+    """Remove an OAuth session from Redis."""
+    _get_redis().delete(f"{_OAUTH_SESSION_PREFIX}{session_id}")
 
 
 def _check_google_configured():
@@ -221,7 +241,6 @@ async def request_device_code(provider: str, current_user: dict = Depends(get_cu
     Also returns a session_id to poll for completion.
     """
     _check_google_configured()
-    _cleanup_expired_sessions()
 
     if provider not in SCOPES_BY_PROVIDER:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
@@ -244,20 +263,20 @@ async def request_device_code(provider: str, current_user: dict = Depends(get_cu
     data = resp.json()
 
     session_id = str(uuid.uuid4())
-    _pending_sessions[session_id] = {
+    expires_in = data.get("expires_in", 1800)
+    _store_session(session_id, {
         "user_id": current_user["id"],
         "provider": provider,
         "device_code": data["device_code"],
         "interval": data.get("interval", 5),
-        "expires_at": datetime.utcnow().timestamp() + data.get("expires_in", 1800),
         "scopes": scopes,
-    }
+    }, ttl_seconds=expires_in)
 
     return {
         "session_id": session_id,
         "user_code": data["user_code"],
         "verification_url": data["verification_url"],
-        "expires_in": data.get("expires_in", 1800),
+        "expires_in": expires_in,
         "interval": data.get("interval", 5),
     }
 
@@ -274,17 +293,12 @@ async def poll_device_code(provider: str, session_id: str = "", current_user: di
     Returns:
       - status: "pending" (keep polling), "complete" (tokens saved), "expired", "error"
     """
-    if session_id not in _pending_sessions:
+    session = _get_session(session_id)
+    if session is None:
         raise HTTPException(status_code=404, detail="Unknown or expired session")
-
-    session = _pending_sessions[session_id]
 
     if session["user_id"] != current_user["id"]:
         raise HTTPException(status_code=403, detail="Session does not belong to this user")
-
-    if datetime.utcnow().timestamp() > session["expires_at"]:
-        _pending_sessions.pop(session_id, None)
-        return {"status": "expired", "message": "Device code has expired. Please start again."}
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
@@ -301,7 +315,7 @@ async def poll_device_code(provider: str, session_id: str = "", current_user: di
 
     if resp.status_code == 200 and "access_token" in token_data:
         # Authorization complete
-        _pending_sessions.pop(session_id, None)
+        _delete_session(session_id)
         result = _save_tokens(
             user_id=session["user_id"],
             provider=session["provider"],
@@ -323,15 +337,15 @@ async def poll_device_code(provider: str, session_id: str = "", current_user: di
         return {"status": "pending", "message": "Polling too fast, slowing down...", "interval": session["interval"] + 2}
 
     if error == "expired_token":
-        _pending_sessions.pop(session_id, None)
+        _delete_session(session_id)
         return {"status": "expired", "message": "Device code has expired. Please start again."}
 
     if error == "access_denied":
-        _pending_sessions.pop(session_id, None)
+        _delete_session(session_id)
         return {"status": "denied", "message": "Authorization was denied by the user."}
 
     logger.error("Unexpected token poll response: %s", token_data)
-    _pending_sessions.pop(session_id, None)
+    _delete_session(session_id)
     return {"status": "error", "message": token_data.get("error_description", "Unknown error")}
 
 

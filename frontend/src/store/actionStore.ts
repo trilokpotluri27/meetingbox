@@ -29,11 +29,11 @@ export const useActionStore = create<ActionState>((set, get) => ({
 
   approveAction: async (actionId: string) => {
     await actionsApi.approve(actionId)
-    set({ actions: get().actions.filter((a) => a.id !== actionId) })
+    set({ actions: get().actions.map((a) => a.id === actionId ? { ...a, status: 'approved' } : a) })
   },
 
   dismissAction: async (actionId: string) => {
     await actionsApi.dismiss(actionId)
-    set({ actions: get().actions.filter((a) => a.id !== actionId) })
+    set({ actions: get().actions.map((a) => a.id === actionId ? { ...a, status: 'dismissed' } : a) })
   },
 }))

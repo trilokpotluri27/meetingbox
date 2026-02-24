@@ -121,7 +121,7 @@ def _get_serial() -> str:
 # ======================================================================
 
 @router.get("/settings")
-async def get_settings():
+async def get_settings(current_user: dict = Depends(get_current_user)):
     """Return current device settings."""
     return _load_settings()
 
@@ -137,7 +137,7 @@ class SettingsUpdate(BaseModel):
 
 
 @router.patch("/settings")
-async def update_settings(body: SettingsUpdate):
+async def update_settings(body: SettingsUpdate, current_user: dict = Depends(get_current_user)):
     """Update one or more device settings."""
     current = _load_settings()
     updates = body.dict(exclude_none=True)
@@ -175,7 +175,7 @@ async def update_settings(body: SettingsUpdate):
 # ======================================================================
 
 @router.get("/device-info")
-async def device_info():
+async def device_info(current_user: dict = Depends(get_current_user)):
     """
     Extended system info for the OLED display.
     Returns everything the device-ui HomeScreen footer + Settings need.
@@ -217,7 +217,7 @@ async def device_info():
 # ======================================================================
 
 @router.get("/wifi/scan")
-async def wifi_scan():
+async def wifi_scan(current_user: dict = Depends(get_current_user)):
     """Scan for available WiFi networks."""
     networks = []
     try:
@@ -253,7 +253,7 @@ class WiFiConnect(BaseModel):
 
 
 @router.post("/wifi/connect")
-async def wifi_connect(body: WiFiConnect):
+async def wifi_connect(body: WiFiConnect, current_user: dict = Depends(get_current_user)):
     """Connect to a WiFi network using NetworkManager."""
     try:
         # Remove any stale connection profile first
@@ -298,7 +298,7 @@ async def wifi_connect(body: WiFiConnect):
 
 
 @router.post("/wifi/disconnect")
-async def wifi_disconnect():
+async def wifi_disconnect(current_user: dict = Depends(get_current_user)):
     """Disconnect from current WiFi."""
     try:
         subprocess.run(
@@ -315,7 +315,7 @@ async def wifi_disconnect():
 # ======================================================================
 
 @router.get("/check-updates")
-async def check_updates():
+async def check_updates(current_user: dict = Depends(get_current_user)):
     """Check for firmware updates (placeholder – real impl would check a server)."""
     return {
         "update_available": False,
@@ -326,7 +326,7 @@ async def check_updates():
 
 
 @router.post("/install-update")
-async def install_update():
+async def install_update(current_user: dict = Depends(get_current_user)):
     """Install firmware update (placeholder)."""
     return {"status": "no_update_available"}
 

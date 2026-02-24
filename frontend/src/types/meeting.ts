@@ -24,7 +24,7 @@ export interface TranscriptSegment {
   end_time: number
   text: string
   speaker_id: string | null
-  confidence: number
+  confidence?: number
 }
 
 export interface MeetingSummary {
@@ -43,5 +43,5 @@ export interface ActionItem {
   task: string
   assignee: string | null
   due_date: string | null
-  completed: boolean
+  completed?: boolean
 }

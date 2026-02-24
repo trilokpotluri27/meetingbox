@@ -80,7 +80,7 @@ export default function App() {
               hasUsers === false ? (
                 <Navigate to="/setup" />
               ) : isAuthed ? (
-                <Navigate to="/dashboard" />
+                <Navigate to={user?.onboarding_complete ? '/dashboard' : '/onboarding'} />
               ) : (
                 <Register />
               )
@@ -94,7 +94,7 @@ export default function App() {
               hasUsers === false ? (
                 <Navigate to="/setup" />
               ) : isAuthed ? (
-                <Navigate to="/dashboard" />
+                <Navigate to={user?.onboarding_complete ? '/dashboard' : '/onboarding'} />
               ) : (
                 <Login />
               )

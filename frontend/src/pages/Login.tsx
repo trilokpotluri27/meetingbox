@@ -15,9 +15,8 @@ export default function Login() {
     if (!username.trim() || !password) return
     setSubmitting(true)
     try {
-      await login(username.trim(), password)
-      const user = useAuthStore.getState().user
-      navigate(user?.onboarding_complete ? '/dashboard' : '/onboarding', { replace: true })
+      const result = await login(username.trim(), password)
+      navigate(result.user.onboarding_complete ? '/dashboard' : '/onboarding', { replace: true })
     } catch (err: any) {
       const msg = err?.response?.data?.detail || 'Login failed'
       toast.error(msg)
