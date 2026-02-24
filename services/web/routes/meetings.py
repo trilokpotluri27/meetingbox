@@ -158,9 +158,10 @@ class MeetingDetail(BaseModel):
 
 
 # --- Start / Stop meeting (wire to Redis for audio service) ---
+# Recording control uses get_optional_user so the device-ui (no login) can start/stop/pause/resume.
 
 @router.post("/start")
-async def start_meeting(current_user: dict = Depends(get_current_user)):
+async def start_meeting(current_user: Optional[dict] = Depends(get_optional_user)):
   """Start a new recording. Sends command to audio service via Redis."""
   session_id = _generate_session_id()
   _get_redis().publish("commands", json.dumps({"action": "start_recording", "session_id": session_id}))
@@ -170,7 +171,7 @@ async def start_meeting(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/stop")
-async def stop_meeting(current_user: dict = Depends(get_current_user)):
+async def stop_meeting(current_user: Optional[dict] = Depends(get_optional_user)):
   """Stop the current recording. Sends command to audio service via Redis."""
   session_id = _get_redis().get("current_meeting_id")
   _get_redis().publish(
@@ -184,7 +185,7 @@ async def stop_meeting(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/recording-status")
-async def recording_status(current_user: dict = Depends(get_current_user)):
+async def recording_status(current_user: Optional[dict] = Depends(get_optional_user)):
   """Current recording state for the dashboard."""
   state = _get_redis().get("recording_state") or "idle"
   current_id = _get_redis().get("current_meeting_id")
@@ -192,7 +193,7 @@ async def recording_status(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/reset-recording-state")
-async def reset_recording_state(current_user: dict = Depends(get_current_user)):
+async def reset_recording_state(current_user: Optional[dict] = Depends(get_optional_user)):
   """Clear recording state so the dashboard shows Start/Record buttons again (e.g. if stuck on Processing)."""
   _get_redis().set("recording_state", "idle")
   _get_redis().delete("current_meeting_id")
@@ -200,7 +201,7 @@ async def reset_recording_state(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/pause")
-async def pause_meeting(current_user: dict = Depends(get_current_user)):
+async def pause_meeting(current_user: Optional[dict] = Depends(get_optional_user)):
   """Pause the current recording (stub -- audio service does not yet support pause)."""
   state = _get_redis().get("recording_state") or "idle"
   if state != "recording":
@@ -210,7 +211,7 @@ async def pause_meeting(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/resume")
-async def resume_meeting(current_user: dict = Depends(get_current_user)):
+async def resume_meeting(current_user: Optional[dict] = Depends(get_optional_user)):
   """Resume a paused recording (stub -- audio service does not yet support resume)."""
   state = _get_redis().get("recording_state") or "idle"
   if state != "paused":
