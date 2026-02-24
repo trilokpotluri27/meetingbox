@@ -137,12 +137,12 @@ HTML_PAGE = """<!DOCTYPE html>
     Redirecting to dashboard in <strong id="countdown">15</strong>s...
   </p>
   <p style="text-align:center; margin-top:16px;">
-    <span class="url">meetingbox.local</span>
+    <span class="url">meetingbox.local:8000</span>
   </p>
   <p id="redirect-fallback" class="note" style="display:none; margin-top:16px; color:#8E8E93; font-size:13px; text-align:center;">
     Redirect not working? Make sure your phone reconnected to your WiFi, then
-    <a href="http://meetingbox.local/" style="color:#3888FA;">tap here</a>
-    or open <strong>http://meetingbox.local</strong> in your browser.
+    <a href="http://meetingbox.local:8000/" style="color:#3888FA;">tap here</a>
+    or open <strong>http://meetingbox.local:8000</strong> in your browser.
   </p>
 </div>
 
@@ -219,7 +219,7 @@ function startRedirectCountdown() {
       clearInterval(timer);
       document.getElementById('redirect-status').textContent = 'Redirecting now...';
       document.getElementById('redirect-fallback').style.display = 'block';
-      window.location.href = 'http://meetingbox.local/';
+      window.location.href = 'http://meetingbox.local:8000/';
     }
   }, 1000);
 }
@@ -367,7 +367,19 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
                     # Shut down the onboard HTTP server to free port 80
                     print("[Onboard] Stopping onboard server...", flush=True)
                     self.server.shutdown()
-                    time.sleep(1)
+                    self.server.server_close()
+
+                    # Wait until port 80 is actually free
+                    for _attempt in range(10):
+                        check = subprocess.run(
+                            ["ss", "-tlnp"],
+                            capture_output=True, text=True, timeout=5,
+                        )
+                        if ":80 " not in check.stdout:
+                            break
+                        time.sleep(1)
+                    else:
+                        print("[Onboard] WARNING: port 80 still held after 10s", flush=True)
 
                     # Start nginx for normal dashboard access
                     print("[Onboard] Starting nginx for normal operation...", flush=True)

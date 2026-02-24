@@ -43,17 +43,33 @@ docker compose --profile screen down 2>/dev/null || true
 pkill -f onboard_server 2>/dev/null || true
 bash scripts/hotspot.sh stop 2>/dev/null || true
 
-# Kill anything on port 80
+# Kill anything on port 80 and WAIT until it's actually free
 if ss -tlnp 2>/dev/null | grep -q ':80 '; then
     echo "       Killing process on port 80..."
     fuser -k 80/tcp 2>/dev/null || true
-    sleep 1
+    for i in 1 2 3 4 5; do
+        sleep 1
+        ss -tlnp 2>/dev/null | grep -q ':80 ' || break
+    done
+    if ss -tlnp 2>/dev/null | grep -q ':80 '; then
+        echo "       WARNING: port 80 still in use after 5 retries"
+    else
+        echo "       Port 80 is free"
+    fi
 fi
 
 # 2. Pull latest code
 echo "[2/8] Pulling latest code..."
 ACTUAL_USER=${SUDO_USER:-$USER}
 sudo -u "$ACTUAL_USER" git pull || echo "   (git pull skipped)"
+
+# 2.5. Build frontend
+echo "       Building frontend..."
+if [ -f "$PROJECT_DIR/frontend/package.json" ]; then
+    sudo -u "$ACTUAL_USER" bash -c "cd '$PROJECT_DIR/frontend' && npm install && npm run build"
+else
+    echo "       WARNING: frontend/package.json not found — skipping build"
+fi
 
 # Determine setup state early so steps 4-5 can adapt
 MARKER="$PROJECT_DIR/data/config/.setup_complete"

@@ -8,7 +8,6 @@ import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 import redis
 
 from database import init_database
@@ -147,9 +146,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 @app.get("/health")
 async def health() -> dict:
   return {"status": "healthy", "service": "meetingbox-web"}
-
-
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 
 if __name__ == "__main__":
