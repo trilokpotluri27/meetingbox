@@ -37,23 +37,28 @@ except ImportError:
 
 def _get_hotspot_ssid() -> str:
     """Read the active hotspot SSID from the system."""
-    try:
-        result = subprocess.run(
-            ["bash", "/opt/meetingbox/scripts/hotspot.sh", "status"],
-            capture_output=True, text=True, timeout=5,
-        )
-        parts = result.stdout.strip().split("|")
-        if parts[0] == "active" and len(parts) >= 2:
-            return parts[1]
-    except Exception:
-        pass
+    # Try multiple possible locations for the hotspot script
+    for script_path in ["/opt/meetingbox/scripts/hotspot.sh",
+                        "/home/meetingbox/meetingbox/scripts/hotspot.sh"]:
+        try:
+            result = subprocess.run(
+                ["bash", script_path, "status"],
+                capture_output=True, text=True, timeout=5,
+            )
+            parts = result.stdout.strip().split("|")
+            if parts[0] == "active" and len(parts) >= 2:
+                return parts[1]
+        except Exception:
+            continue
 
-    try:
-        mac = Path("/sys/class/net/wlan0/address").read_text().strip()
-        suffix = mac.replace(":", "")[-4:].upper()
-        return f"{HOTSPOT_SSID_PREFIX}{suffix}"
-    except Exception:
-        pass
+    # Fallback: derive from MAC address
+    for iface in ["wlan0", "wlp1s0", "wlp2s0"]:
+        try:
+            mac = Path(f"/sys/class/net/{iface}/address").read_text().strip()
+            suffix = mac.replace(":", "")[-4:].upper()
+            return f"{HOTSPOT_SSID_PREFIX}{suffix}"
+        except Exception:
+            continue
 
     return f"{HOTSPOT_SSID_PREFIX}Setup"
 

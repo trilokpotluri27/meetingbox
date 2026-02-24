@@ -34,6 +34,15 @@ cmd_start() {
     # Remove any previous hotspot connection profile
     nmcli connection delete "$CON_NAME" 2>/dev/null || true
 
+    # Write DNS redirect config BEFORE starting the hotspot so dnsmasq
+    # picks it up on first launch (avoids the down/up bounce)
+    local dnsmasq_conf="/etc/NetworkManager/dnsmasq-shared.d/meetingbox.conf"
+    mkdir -p "$(dirname "$dnsmasq_conf")"
+    cat > "$dnsmasq_conf" <<EOF
+address=/meetingbox.setup/${HOTSPOT_IP}
+address=/meetingbox.local/${HOTSPOT_IP}
+EOF
+
     # Create WiFi hotspot (no password — open network for easy onboarding)
     nmcli connection add \
         type wifi \
@@ -51,20 +60,8 @@ cmd_start() {
 
     nmcli connection up "$CON_NAME"
 
-    # Add DNS redirect so meetingbox.setup resolves to our IP.
-    # dnsmasq is started automatically by NM in shared mode;
-    # we write a drop-in config to redirect our domain.
-    local dnsmasq_conf="/etc/NetworkManager/dnsmasq-shared.d/meetingbox.conf"
-    mkdir -p "$(dirname "$dnsmasq_conf")"
-    cat > "$dnsmasq_conf" <<EOF
-address=/meetingbox.setup/${HOTSPOT_IP}
-address=/meetingbox.local/${HOTSPOT_IP}
-EOF
-
-    # Restart NM's dnsmasq to pick up the config
-    nmcli connection down "$CON_NAME" 2>/dev/null || true
-    sleep 1
-    nmcli connection up "$CON_NAME"
+    # Brief wait for AP to stabilise
+    sleep 2
 
     echo "[Hotspot] AP active — SSID: ${ssid}, IP: ${HOTSPOT_IP}"
     echo "[Hotspot] meetingbox.setup → ${HOTSPOT_IP}"

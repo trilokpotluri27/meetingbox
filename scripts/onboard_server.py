@@ -365,13 +365,27 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
+    if os.geteuid() != 0:
+        print("[Onboard] ERROR: Must run as root (port 80 requires root)", flush=True)
+        sys.exit(1)
+
     marker = Path(SETUP_MARKER)
     if marker.exists():
         print("[Onboard] Setup already complete — exiting", flush=True)
         sys.exit(0)
 
-    print(f"[Onboard] Starting onboarding server on port {LISTEN_PORT}", flush=True)
-    server = http.server.HTTPServer(("0.0.0.0", LISTEN_PORT), OnboardHandler)
+    print(f"[Onboard] Marker path: {SETUP_MARKER}", flush=True)
+    print(f"[Onboard] Project root: {_PROJECT_ROOT}", flush=True)
+    print(f"[Onboard] Starting onboarding server on 0.0.0.0:{LISTEN_PORT}", flush=True)
+
+    try:
+        server = http.server.HTTPServer(("0.0.0.0", LISTEN_PORT), OnboardHandler)
+    except OSError as e:
+        print(f"[Onboard] ERROR: Cannot bind to port {LISTEN_PORT}: {e}", flush=True)
+        print(f"[Onboard] Is another process using port {LISTEN_PORT}? Check with: sudo ss -tlnp | grep :{LISTEN_PORT}", flush=True)
+        sys.exit(1)
+
+    print(f"[Onboard] READY — listening on http://0.0.0.0:{LISTEN_PORT}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
