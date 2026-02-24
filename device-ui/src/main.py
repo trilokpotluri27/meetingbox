@@ -340,7 +340,7 @@ class MeetingBoxApp(App):
         try:
             async for event in self.backend.subscribe_events():
                 etype = event.get('type')
-                data = event.get('data', {})
+                data = event.get('data') or event
                 logger.debug(f"WS event: {etype}")
 
                 dispatch = {

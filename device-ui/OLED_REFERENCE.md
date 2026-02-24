@@ -168,23 +168,41 @@ Routes that are NOT called by the device-ui (e.g., auth routes, upload-audio) ca
 - `device-ui/src/main.py` -- removed guard in `stop_recording()`
 - `device-ui/src/screens/recording.py` -- added logging to stop flow
 
-### 2026-02-24: Processing Screen Stuck Forever (FIXED)
-**Problem**: The transcription service publishes `transcription_complete` events, but the device-ui's WebSocket dispatch table only listened for `processing_complete` (which no service ever publishes). The device-ui never knew transcription was done.
+### 2026-02-24: Processing Screen Stuck Forever (FIXED — two rounds)
+**Problem (round 1)**: The transcription service publishes `transcription_complete` events, but the device-ui's WebSocket dispatch table only listened for `processing_complete` (which no service ever publishes).
 
-**Fix**: Added `transcription_complete` to the WebSocket dispatch table. When received, updates the processing progress bar to 80% and triggers `_auto_summarize()` to generate the meeting summary.
+**Problem (round 2)**: Even after adding `transcription_complete` to the dispatch, the `meeting_id` was never extracted. The WebSocket dispatch did `data = event.get('data', {})`, but events from the `events` Redis channel have fields at the TOP LEVEL — there's no `data` wrapper. So `data` was `{}` and `meeting_id` was `None`.
+
+**Also**: Progress bar jumped from 0% to 80% instantly because no `processing_progress` events are ever published during transcription.
+
+**Fix**:
+1. Changed `data = event.get('data', {})` to `data = event.get('data') or event` — if no `data` key, use the event itself.
+2. Added `on_transcription_complete` handler + dispatch entry.
+3. Added simulated progress animation to the processing screen (0→68% gradual, then real events take over).
 
 **Files changed**:
-- `device-ui/src/main.py` -- added `on_transcription_complete` handler + dispatch entry
+- `device-ui/src/main.py` -- fixed data extraction, added `on_transcription_complete`
+- `device-ui/src/screens/processing.py` -- added simulated progress, reset state on enter
 
-### 2026-02-24: No Live Feedback During Recording (FIXED)
-**Problem**: The recording screen showed "Waiting for speech…" forever because no service publishes `transcription_update` events during recording. Real-time streaming transcription is not implemented. The audio service publishes `audio_segments` events but the device-ui ignored them.
+### 2026-02-24: Live Transcription During Recording (FIXED — two rounds)
+**Problem (round 1)**: No service published `transcription_update` events during recording. Initial fix only showed segment counts.
 
-**Fix**: Added `audio_segment` event detection in `api_client.py` (events without a `type` field but with `segment_num` are classified as `audio_segment`). Added dispatch handler `on_audio_segment` in `main.py` and `RecordingScreen` to show "Audio captured — N segments processed" as segments are saved.
+**Problem (round 2)**: User wanted actual live text, not just "8 segments processed".
+
+**Fix**: Added real per-segment live transcription to the transcription service:
+1. Downloaded `ggml-tiny.en.bin` model (~75MB, fast enough for live use on RPi5) in the Dockerfile.
+2. Added a background thread in `transcription_service.py` that subscribes to `audio_segments` Redis channel.
+3. When a segment WAV is saved, runs Whisper.cpp (tiny model, 2 threads) on it immediately.
+4. Publishes `transcription_update` events to the `events` channel with the text.
+5. Device-ui's existing `on_transcription_update` handler shows the last 2 lines of text.
+6. Falls back to segment count display until the first live text arrives.
 
 **Files changed**:
+- `services/transcription/Dockerfile` -- added `ggml-tiny.en.bin` download
+- `services/transcription/transcription_service.py` -- added `_live_transcribe_segment`, `_live_segment_listener`, background thread
 - `device-ui/src/api_client.py` -- classify segment events as `audio_segment`
 - `device-ui/src/main.py` -- added `on_audio_segment` handler + dispatch entry
-- `device-ui/src/screens/recording.py` -- added `on_audio_segment()` + changed default text
+- `device-ui/src/screens/recording.py` -- shows last 2 lines of live text, falls back to segment count
 
 ## Error Handling Pattern
 

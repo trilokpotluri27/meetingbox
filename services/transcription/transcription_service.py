@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -19,17 +20,25 @@ class TranscriptionService:
   """
   Consume completed recordings, run Whisper.cpp on them, and persist
   structured transcript segments into SQLite.
+
+  Also provides live transcription during recording by processing
+  audio segments as they are captured (using a fast tiny model).
   """
 
   def __init__(self) -> None:
     self.redis_client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
 
-    # ensure DB schema exists
     init_database()
 
-    # whisper.cpp paths inside this container (cmake build)
     self.whisper_bin = "/app/whisper.cpp/build/bin/whisper-cli"
     self.model_path = "/app/whisper.cpp/models/ggml-medium.bin"
+    self.live_model_path = "/app/whisper.cpp/models/ggml-tiny.en.bin"
+
+    self._live_enabled = Path(self.live_model_path).exists()
+    if self._live_enabled:
+      logger.info("Live transcription enabled (tiny.en model found)")
+    else:
+      logger.warning("Live transcription disabled (tiny.en model not found)")
 
     logger.info("Service initialized, DB=%s", DB_PATH)
 
@@ -141,6 +150,84 @@ class TranscriptionService:
     hh, mm, rest = ts.replace(",", ".").split(":")
     return int(hh) * 3600 + int(mm) * 60 + float(rest)
 
+  # --- Live transcription (per-segment, using tiny model) ---------------
+
+  def _live_transcribe_segment(self, audio_path: str) -> str | None:
+    """Run whisper-cli with the tiny model on a single audio segment.
+    Returns the transcribed text, or None on failure."""
+    path = Path(audio_path)
+    if not path.exists():
+      logger.warning("Live: segment file not found: %s", audio_path)
+      return None
+
+    output_base = str(path.with_suffix("")) + "_live"
+    txt_path = Path(output_base + ".txt")
+
+    cmd = [
+      self.whisper_bin,
+      "-m", self.live_model_path,
+      "-f", audio_path,
+      "-of", output_base,
+      "-otxt",
+      "--no-timestamps",
+      "--language", "en",
+      "--threads", os.getenv("WHISPER_LIVE_THREADS", "2"),
+    ]
+
+    try:
+      result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+      logger.warning("Live: whisper timed out on %s", audio_path)
+      return None
+
+    if result.returncode != 0:
+      return None
+
+    if not txt_path.exists():
+      return None
+
+    text = txt_path.read_text(encoding="utf-8", errors="ignore").strip()
+    try:
+      txt_path.unlink()
+    except OSError:
+      pass
+
+    return text if text else None
+
+  def _live_segment_listener(self) -> None:
+    """Background thread: subscribe to audio_segments and transcribe each one live."""
+    logger.info("Live transcription listener started")
+    client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
+    pubsub = client.pubsub()
+    pubsub.subscribe("audio_segments")
+
+    for message in pubsub.listen():
+      if message["type"] != "message":
+        continue
+      try:
+        segment = json.loads(message["data"])
+      except json.JSONDecodeError:
+        continue
+
+      audio_path = segment.get("path")
+      session_id = segment.get("session_id")
+      if not audio_path:
+        continue
+
+      text = self._live_transcribe_segment(audio_path)
+      if text:
+        logger.info("Live: segment %s -> %s", segment.get("segment_num"), text[:80])
+        client.publish(
+          "events",
+          json.dumps({
+            "type": "transcription_update",
+            "text": text,
+            "session_id": session_id,
+            "segment_num": segment.get("segment_num"),
+            "timestamp": datetime.now().isoformat(),
+          }),
+        )
+
   # --- Persistence -----------------------------------------------------
 
   def _ensure_meeting_record(self, meeting_id: str, audio_path: str) -> None:
@@ -202,6 +289,11 @@ class TranscriptionService:
 
   def run(self) -> None:
     logger.info("Service started, waiting for events...")
+
+    if self._live_enabled:
+      live_thread = threading.Thread(target=self._live_segment_listener, daemon=True)
+      live_thread.start()
+
     pubsub = self.redis_client.pubsub()
     pubsub.subscribe("events")
 

@@ -4,15 +4,19 @@ Processing Screen – AI transcription / summary progress (480 × 320)
 PRD §5.9 – Centred progress bar, meeting info, time estimate.
 """
 
+import logging
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.widget import Widget
 from kivy.uix.progressbar import ProgressBar
 from kivy.graphics import Color, Rectangle, RoundedRectangle
+from kivy.clock import Clock
 
 from screens.base_screen import BaseScreen
 from components.status_bar import StatusBar
 from config import COLORS, FONT_SIZES, SPACING, BORDER_RADIUS
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessingScreen(BaseScreen):
@@ -20,6 +24,9 @@ class ProcessingScreen(BaseScreen):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._sim_event = None
+        self._sim_progress = 0.0
+        self._real_progress_received = False
         self._build_ui()
 
     def _build_ui(self):
@@ -110,27 +117,63 @@ class ProcessingScreen(BaseScreen):
         self.meeting_label.text = f'Meeting: {title}\nDuration: {dur} minutes'
 
     def on_progress_update(self, progress: int, status: str):
-        self.progress_bar.value = progress
-        self.pct_label.text = f'{progress}%'
+        self._real_progress_received = True
+        self._stop_simulated_progress()
+        target = max(progress, int(self._sim_progress))
+        self.progress_bar.value = target
+        self.pct_label.text = f'{target}%'
         if status:
             self.status_label.text = status
 
-        # ETA formatting
         eta = getattr(self, '_eta_seconds', None)
         if eta and eta < 60:
             self.eta_label.text = 'Estimated time remaining: less than 1 minute'
         elif eta:
             self.eta_label.text = f'Estimated time remaining: {eta // 60} minutes'
+        else:
+            self.eta_label.text = ''
 
     def set_eta(self, seconds: int):
         self._eta_seconds = seconds
 
-    # Privacy
     def on_enter(self):
         self.status_bar.device_label.text = getattr(self.app, 'device_name', 'MeetingBox')
         privacy = getattr(self.app, 'privacy_mode', False)
         if privacy:
             self.status_bar.status_text = 'PROCESSING (Local)'
 
-    def on_dashboard_pressed(self, _inst):
-        pass
+        self.progress_bar.value = 0
+        self.pct_label.text = '0%'
+        self.status_label.text = 'Transcribing audio…'
+        self.eta_label.text = 'Estimated time remaining: calculating…'
+        self._sim_progress = 0.0
+        self._real_progress_received = False
+        self._start_simulated_progress()
+
+    def on_leave(self):
+        self._stop_simulated_progress()
+
+    def _start_simulated_progress(self):
+        self._stop_simulated_progress()
+        self._sim_event = Clock.schedule_interval(self._tick_progress, 1.0)
+
+    def _stop_simulated_progress(self):
+        if self._sim_event:
+            self._sim_event.cancel()
+            self._sim_event = None
+
+    def _tick_progress(self, _dt):
+        if self._real_progress_received:
+            self._stop_simulated_progress()
+            return
+        if self._sim_progress < 30:
+            self._sim_progress += 3.0
+        elif self._sim_progress < 55:
+            self._sim_progress += 1.5
+        elif self._sim_progress < 68:
+            self._sim_progress += 0.5
+        else:
+            return
+        pct = int(self._sim_progress)
+        self.progress_bar.value = pct
+        self.pct_label.text = f'{pct}%'

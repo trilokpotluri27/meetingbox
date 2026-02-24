@@ -16,10 +16,15 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git && \
   cmake -B build && \
   cmake --build build --config Release
 
-# Download English medium model (required for transcription; ~1.5GB)
+# Download English medium model for final transcription (~1.5GB)
 RUN cd /app/whisper.cpp/models && \
   bash -c 'wget -q --show-progress -O ggml-medium.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin' && \
   test -f ggml-medium.bin
+
+# Download tiny model for fast live transcription during recording (~75MB)
+RUN cd /app/whisper.cpp/models && \
+  bash -c 'wget -q --show-progress -O ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin' && \
+  test -f ggml-tiny.en.bin
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
