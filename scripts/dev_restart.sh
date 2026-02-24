@@ -112,35 +112,18 @@ docker compose --profile screen up -d device-ui
 
 # 8. Start onboarding if setup not complete
 if [ ! -f "$MARKER" ]; then
-    echo "[8/8] Starting onboarding..."
+    echo "[8/8] Starting onboarding (hotspot only)..."
 
     # nginx was intentionally not started in step 5, so port 80 is free
 
-    # Start the HTTP server FIRST so it's ready when phones connect
-    echo "       Starting onboard server on port 80..."
-    python3 "$PROJECT_DIR/scripts/onboard_server.py" &
-    ONBOARD_PID=$!
-
-    # Wait up to 5 seconds for the server to bind
-    READY=false
-    for i in 1 2 3 4 5; do
-        sleep 1
-        if ss -tlnp 2>/dev/null | grep -q ':80 '; then
-            READY=true
-            break
-        fi
-    done
-
-    if [ "$READY" = true ]; then
-        echo "       Onboard server ready (PID $ONBOARD_PID)"
-    else
-        echo "       WARNING: Onboard server may not have started. Check logs."
-    fi
-
-    # Now start the hotspot (phones can connect and the server is already listening)
+    # Start the hotspot so phones can connect
     echo "       Starting WiFi hotspot..."
     bash scripts/hotspot.sh start
 
+    echo ""
+    echo "  >>> Run the onboard server manually:"
+    echo "  >>> sudo python3 $PROJECT_DIR/scripts/onboard_server.py &"
+    echo ""
 else
     echo "[8/8] Setup already complete — skipping onboarding"
 fi
