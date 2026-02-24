@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from auth import get_current_user
+from auth import get_optional_user
 from database import get_connection
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,7 @@ def _row_to_action(row: dict) -> dict:
 
 
 @router.get("/meetings/{meeting_id}/actions")
-async def list_actions(meeting_id: str, current_user: dict = Depends(get_current_user)):
+async def list_actions(meeting_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
     conn = get_connection()
     conn.row_factory = lambda c, r: {col[0]: r[i] for i, col in enumerate(c.description)}
     try:
@@ -146,7 +146,7 @@ async def list_actions(meeting_id: str, current_user: dict = Depends(get_current
 
 
 @router.patch("/actions/{action_id}")
-async def update_action(action_id: str, body: ActionUpdateRequest, current_user: dict = Depends(get_current_user)):
+async def update_action(action_id: str, body: ActionUpdateRequest, current_user: Optional[dict] = Depends(get_optional_user)):
     conn = get_connection()
     conn.row_factory = lambda c, r: {col[0]: r[i] for i, col in enumerate(c.description)}
     try:
@@ -181,7 +181,7 @@ async def update_action(action_id: str, body: ActionUpdateRequest, current_user:
 
 
 @router.post("/actions/{action_id}/approve")
-async def approve_action(action_id: str, current_user: dict = Depends(get_current_user)):
+async def approve_action(action_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -197,7 +197,7 @@ async def approve_action(action_id: str, current_user: dict = Depends(get_curren
 
 
 @router.post("/actions/{action_id}/dismiss")
-async def dismiss_action(action_id: str, current_user: dict = Depends(get_current_user)):
+async def dismiss_action(action_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -283,7 +283,7 @@ def _ask_claude_for_draft(client, action: dict, draft: dict) -> dict:
 
 
 @router.post("/actions/{action_id}/execute")
-async def execute_action(action_id: str, current_user: dict = Depends(get_current_user)):
+async def execute_action(action_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
     """
     Execute an action: Claude generates structured content, then Gmail/Calendar
     APIs deliver it if the user has connected those integrations.
@@ -333,7 +333,7 @@ async def execute_action(action_id: str, current_user: dict = Depends(get_curren
     output_type = result_json.get("output_type", "text")
     delivery_status = "draft_only"
 
-    user_id = current_user["id"]
+    user_id = current_user["id"] if current_user else None
 
     # Step 3: Deliver via real API if integration is connected
     is_email = output_type == "email" or action["type"] == "email_draft"

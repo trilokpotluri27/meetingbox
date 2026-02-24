@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 import psutil
 
-from auth import get_current_user, get_optional_user
+from auth import get_optional_user
 from database import get_connection
 
 router = APIRouter()
@@ -121,7 +121,7 @@ def _get_serial() -> str:
 # ======================================================================
 
 @router.get("/settings")
-async def get_settings(current_user: dict = Depends(get_current_user)):
+async def get_settings(current_user: Optional[dict] = Depends(get_optional_user)):
     """Return current device settings."""
     return _load_settings()
 
@@ -137,7 +137,7 @@ class SettingsUpdate(BaseModel):
 
 
 @router.patch("/settings")
-async def update_settings(body: SettingsUpdate, current_user: dict = Depends(get_current_user)):
+async def update_settings(body: SettingsUpdate, current_user: Optional[dict] = Depends(get_optional_user)):
     """Update one or more device settings."""
     current = _load_settings()
     updates = body.dict(exclude_none=True)
@@ -175,7 +175,7 @@ async def update_settings(body: SettingsUpdate, current_user: dict = Depends(get
 # ======================================================================
 
 @router.get("/device-info")
-async def device_info(current_user: dict = Depends(get_current_user)):
+async def device_info(current_user: Optional[dict] = Depends(get_optional_user)):
     """
     Extended system info for the OLED display.
     Returns everything the device-ui HomeScreen footer + Settings need.
@@ -217,7 +217,7 @@ async def device_info(current_user: dict = Depends(get_current_user)):
 # ======================================================================
 
 @router.get("/wifi/scan")
-async def wifi_scan(current_user: dict = Depends(get_current_user)):
+async def wifi_scan(current_user: Optional[dict] = Depends(get_optional_user)):
     """Scan for available WiFi networks."""
     networks = []
     try:
@@ -253,7 +253,7 @@ class WiFiConnect(BaseModel):
 
 
 @router.post("/wifi/connect")
-async def wifi_connect(body: WiFiConnect, current_user: dict = Depends(get_current_user)):
+async def wifi_connect(body: WiFiConnect, current_user: Optional[dict] = Depends(get_optional_user)):
     """Connect to a WiFi network using NetworkManager."""
     try:
         # Remove any stale connection profile first
@@ -298,7 +298,7 @@ async def wifi_connect(body: WiFiConnect, current_user: dict = Depends(get_curre
 
 
 @router.post("/wifi/disconnect")
-async def wifi_disconnect(current_user: dict = Depends(get_current_user)):
+async def wifi_disconnect(current_user: Optional[dict] = Depends(get_optional_user)):
     """Disconnect from current WiFi."""
     try:
         subprocess.run(
@@ -315,7 +315,7 @@ async def wifi_disconnect(current_user: dict = Depends(get_current_user)):
 # ======================================================================
 
 @router.get("/check-updates")
-async def check_updates(current_user: dict = Depends(get_current_user)):
+async def check_updates(current_user: Optional[dict] = Depends(get_optional_user)):
     """Check for firmware updates (placeholder – real impl would check a server)."""
     return {
         "update_available": False,
@@ -326,7 +326,7 @@ async def check_updates(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/install-update")
-async def install_update(current_user: dict = Depends(get_current_user)):
+async def install_update(current_user: Optional[dict] = Depends(get_optional_user)):
     """Install firmware update (placeholder)."""
     return {"status": "no_update_available"}
 
@@ -371,21 +371,21 @@ async def list_integrations(current_user: dict | None = Depends(get_optional_use
 
 
 @router.post("/integrations/{integration_id}/device-code")
-async def get_integration_device_code(integration_id: str, current_user: dict = Depends(get_current_user)):
+async def get_integration_device_code(integration_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
     """Proxy to the device code request in the integrations router."""
     from routes.integrations import request_device_code
     return await request_device_code(integration_id, current_user)
 
 
 @router.post("/integrations/{integration_id}/poll")
-async def poll_integration(integration_id: str, session_id: str = "", current_user: dict = Depends(get_current_user)):
+async def poll_integration(integration_id: str, session_id: str = "", current_user: Optional[dict] = Depends(get_optional_user)):
     """Proxy to the poll endpoint in the integrations router."""
     from routes.integrations import poll_device_code
     return await poll_device_code(integration_id, session_id, current_user)
 
 
 @router.post("/integrations/{integration_id}/disconnect")
-async def disconnect_integration(integration_id: str, current_user: dict = Depends(get_current_user)):
+async def disconnect_integration(integration_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
     """Proxy to the real disconnect in the integrations router."""
     from routes.integrations import disconnect_integration as real_disconnect
     return await real_disconnect(integration_id, current_user)

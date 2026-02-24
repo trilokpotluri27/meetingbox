@@ -221,7 +221,7 @@ async def resume_meeting(current_user: Optional[dict] = Depends(get_optional_use
 
 
 @router.delete("/{meeting_id}")
-async def delete_meeting(meeting_id: str, current_user: dict = Depends(get_current_user)):
+async def delete_meeting(meeting_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
   """Delete a meeting and all its associated data."""
   conn = get_connection()
   conn.execute("PRAGMA foreign_keys = ON")
@@ -348,7 +348,7 @@ async def upload_audio(file: UploadFile = File(...), current_user: dict = Depend
 
 
 @router.get("/", response_model=List[MeetingResponse])
-async def list_meetings(limit: int = 50, offset: int = 0, status: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def list_meetings(limit: int = 50, offset: int = 0, status: Optional[str] = None, current_user: Optional[dict] = Depends(get_optional_user)):
   conn = get_connection()
   conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}  # type: ignore
@@ -369,7 +369,7 @@ async def list_meetings(limit: int = 50, offset: int = 0, status: Optional[str] 
 
 
 @router.post("/{meeting_id}/summarize")
-async def summarize_meeting(meeting_id: str, current_user: dict = Depends(get_current_user)):
+async def summarize_meeting(meeting_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
   """Generate an AI summary for a transcribed meeting using Claude."""
   client = _get_anthropic_client()
   if not client:
@@ -505,7 +505,7 @@ async def summarize_meeting(meeting_id: str, current_user: dict = Depends(get_cu
 
 
 @router.post("/{meeting_id}/summarize-local")
-async def summarize_meeting_local(meeting_id: str, current_user: dict = Depends(get_current_user)):
+async def summarize_meeting_local(meeting_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
   """Generate a summary using the local Ollama LLM (no API key needed)."""
   conn = get_connection()
   conn.execute("PRAGMA foreign_keys = ON")
@@ -680,7 +680,7 @@ async def summarize_meeting_local(meeting_id: str, current_user: dict = Depends(
 
 
 @router.get("/{meeting_id}", response_model=MeetingDetail)
-async def get_meeting(meeting_id: str, current_user: dict = Depends(get_current_user)):
+async def get_meeting(meeting_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
   conn = get_connection()
   conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}  # type: ignore
