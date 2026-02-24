@@ -137,11 +137,11 @@ HTML_PAGE = """<!DOCTYPE html>
     Redirecting to dashboard in <strong id="countdown">15</strong>s...
   </p>
   <p style="text-align:center; margin-top:16px;">
-    <span class="url">meetingbox.local/setup</span>
+    <span class="url">meetingbox.local</span>
   </p>
   <p id="redirect-fallback" class="note" style="display:none; margin-top:16px; color:#8E8E93; font-size:13px; text-align:center;">
     Redirect not working? Make sure your phone reconnected to your WiFi, then
-    <a href="http://meetingbox.local/setup" style="color:#3888FA;">tap here</a>
+    <a href="http://meetingbox.local/" style="color:#3888FA;">tap here</a>
     or open <strong>http://meetingbox.local</strong> in your browser.
   </p>
 </div>
@@ -219,7 +219,7 @@ function startRedirectCountdown() {
       clearInterval(timer);
       document.getElementById('redirect-status').textContent = 'Redirecting now...';
       document.getElementById('redirect-fallback').style.display = 'block';
-      window.location.href = 'http://meetingbox.local/setup';
+      window.location.href = 'http://meetingbox.local/';
     }
   }, 1000);
 }

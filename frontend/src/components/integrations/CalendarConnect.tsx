@@ -11,8 +11,8 @@ interface CalendarConnectProps {
 export default function CalendarConnect({ connected, onStatusChange }: CalendarConnectProps) {
   const handleConnect = async () => {
     try {
-      const authUrl = await integrationsApi.getAuthUrl('calendar')
-      window.location.href = authUrl
+      const { verification_url } = await integrationsApi.requestDeviceCode('calendar')
+      window.location.href = verification_url
     } catch {
       toast.error('Failed to connect Calendar')
     }
