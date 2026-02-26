@@ -21,8 +21,8 @@ class TranscriptionService:
   Consume completed recordings, run Whisper.cpp on them, and persist
   structured transcript segments into SQLite.
 
-  Also provides live transcription during recording by processing
-  audio segments as they are captured (using a fast tiny model).
+  Uses the multilingual tiny model (ggml-tiny.bin) for both final
+  transcription and live per-segment transcription during recording.
   """
 
   def __init__(self) -> None:
@@ -31,14 +31,14 @@ class TranscriptionService:
     init_database()
 
     self.whisper_bin = "/app/whisper.cpp/build/bin/whisper-cli"
-    self.model_path = "/app/whisper.cpp/models/ggml-medium.bin"
-    self.live_model_path = "/app/whisper.cpp/models/ggml-tiny.en.bin"
+    self.model_path = "/app/whisper.cpp/models/ggml-tiny.bin"
+    self.live_model_path = self.model_path
 
     self._live_enabled = Path(self.live_model_path).exists()
     if self._live_enabled:
-      logger.info("Live transcription enabled (tiny.en model found)")
+      logger.info("Live transcription enabled (tiny multilingual model found)")
     else:
-      logger.warning("Live transcription disabled (tiny.en model not found)")
+      logger.warning("Live transcription disabled (tiny model not found)")
 
     logger.info("Service initialized, DB=%s", DB_PATH)
 
@@ -67,8 +67,6 @@ class TranscriptionService:
       output_base,
       "-otxt",
       "-osrt",
-      "--language",
-      "en",
       "--threads",
       os.getenv("WHISPER_THREADS", "4"),
     ]
@@ -170,7 +168,6 @@ class TranscriptionService:
       "-of", output_base,
       "-otxt",
       "--no-timestamps",
-      "--language", "en",
       "--threads", os.getenv("WHISPER_LIVE_THREADS", "2"),
     ]
 
