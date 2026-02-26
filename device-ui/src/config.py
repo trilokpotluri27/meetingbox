@@ -187,7 +187,8 @@ ENABLE_HAPTIC = False
 # PRIVACY MODE
 # ============================================================================
 
-# Default privacy mode state (can be changed in settings)
+# Default privacy mode state (can be changed in settings).
+# Default is OFF so cloud AI (summarization, etc.) is used unless user enables it.
 DEFAULT_PRIVACY_MODE = False
 
 # ============================================================================

@@ -493,7 +493,14 @@ async def summarize_meeting(meeting_id: str, current_user: Optional[dict] = Depe
     "1. Summary (2-3 sentences)\n"
     "2. Key discussion points (3-5 bullets)\n"
     "3. Decisions made\n"
-    "4. Action items with assignees if available\n"
+    "4. Action items with assignees if available. Each action item MUST include a "
+    '"type" field with one of these values:\n'
+    '   - "email_draft" — for items that require sending an email (e.g. sharing MOM, follow-up emails)\n'
+    '   - "calendar_invite" — for items that require scheduling a meeting or blocking calendar time\n'
+    '   - "task" — for general to-do items that don\'t involve email or calendar\n'
+    '   IMPORTANT: You MUST always include this action item:\n'
+    '   {"task": "Send MOM of this meeting to all stakeholders", "assignee": null, '
+    '"due_date": null, "type": "email_draft"}\n'
     "5. 3-5 topic hashtags\n"
     "6. Overall sentiment (single word or short phrase)\n\n"
     "Return **only** valid JSON in this shape:\n"
@@ -501,7 +508,7 @@ async def summarize_meeting(meeting_id: str, current_user: Optional[dict] = Depe
     '  "summary": "...",\n'
     '  "discussion_points": ["...", "..."],\n'
     '  "decisions": ["...", "..."],\n'
-    '  "action_items": [{"task": "...", "assignee": "...", "due_date": "..."}],\n'
+    '  "action_items": [{"task": "...", "assignee": "...", "due_date": "...", "type": "email_draft | calendar_invite | task"}],\n'
     '  "topics": ["#topic1", "#topic2"],\n'
     '  "sentiment": "Productive"\n'
     "}\n\n"
@@ -630,7 +637,14 @@ async def summarize_meeting_local(meeting_id: str, current_user: Optional[dict] 
     "1. Summary (2-3 sentences)\n"
     "2. Key discussion points (3-5 bullets)\n"
     "3. Decisions made\n"
-    "4. Action items with assignees if available\n"
+    "4. Action items with assignees if available. Each action item MUST include a "
+    '"type" field with one of these values:\n'
+    '   - "email_draft" — for items that require sending an email (e.g. sharing MOM, follow-up emails)\n'
+    '   - "calendar_invite" — for items that require scheduling a meeting or blocking calendar time\n'
+    '   - "task" — for general to-do items that don\'t involve email or calendar\n'
+    '   IMPORTANT: You MUST always include this action item:\n'
+    '   {"task": "Send MOM of this meeting to all stakeholders", "assignee": null, '
+    '"due_date": null, "type": "email_draft"}\n'
     "5. 3-5 topic hashtags\n"
     "6. Overall sentiment (single word or short phrase)\n\n"
     "Return **only** valid JSON with no additional text, in this exact shape:\n"
@@ -638,7 +652,7 @@ async def summarize_meeting_local(meeting_id: str, current_user: Optional[dict] 
     '  "summary": "...",\n'
     '  "discussion_points": ["...", "..."],\n'
     '  "decisions": ["...", "..."],\n'
-    '  "action_items": [{"task": "...", "assignee": "...", "due_date": "..."}],\n'
+    '  "action_items": [{"task": "...", "assignee": "...", "due_date": "...", "type": "email_draft | calendar_invite | task"}],\n'
     '  "topics": ["#topic1", "#topic2"],\n'
     '  "sentiment": "Productive"\n'
     "}\n\n"

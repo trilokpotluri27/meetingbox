@@ -29,6 +29,11 @@ export const actionsApi = {
     return response.data
   },
 
+  deliver: async (actionId: string): Promise<ExecuteResult> => {
+    const response = await client.post(`/api/actions/${actionId}/deliver`)
+    return response.data
+  },
+
   update: async (actionId: string, draft: unknown): Promise<AgenticAction> => {
     const response = await client.patch(`/api/actions/${actionId}`, { draft })
     return response.data

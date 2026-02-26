@@ -50,10 +50,10 @@ export default function MeetingDetailPage() {
 
       setMeeting(normalized)
 
-      // Try loading actions (may 404 if endpoint doesn't exist yet)
       try {
         const actionsData = await actionsApi.list(id)
-        setActions(actionsData)
+        const integrationTypes = new Set(['email_draft', 'calendar_invite'])
+        setActions(actionsData.filter((a) => integrationTypes.has(a.type)))
       } catch {
         setActions([])
       }
@@ -116,8 +116,15 @@ export default function MeetingDetailPage() {
     }
   }
 
-  const handleActionApproved = (actionId: string) => {
-    setActions(actions.filter((a) => a.id !== actionId))
+  const handleActionApproved = async () => {
+    if (!id) return
+    try {
+      const actionsData = await actionsApi.list(id)
+      const integrationTypes = new Set(['email_draft', 'calendar_invite'])
+      setActions(actionsData.filter((a) => integrationTypes.has(a.type)))
+    } catch {
+      // keep current state
+    }
   }
 
   const handleDeleteMeeting = async () => {
@@ -375,7 +382,7 @@ export default function MeetingDetailPage() {
                 <ActionCard
                   key={action.id}
                   action={action}
-                  onApproved={() => handleActionApproved(action.id)}
+                  onApproved={handleActionApproved}
                 />
               ))
             )}

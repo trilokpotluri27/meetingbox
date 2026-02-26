@@ -134,6 +134,8 @@ class HomeScreen(BaseScreen):
             self.start_btn.text = 'START RECORDING\n⏺\n(Local Only)'
         else:
             self.status_bar.status_text = 'READY'
+            self.start_btn.text = 'START RECORDING\n⏺'
+            self.last_meeting_label.text = 'No meetings yet — Press start to begin'
 
     # ------------------------------------------------------------------
     # Data loading

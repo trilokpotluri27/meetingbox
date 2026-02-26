@@ -7,10 +7,15 @@ export interface AgenticAction {
   title: string
   assignee: string | null
   confidence: number | null
-  draft: EmailDraft | CalendarInviteDraft | Record<string, unknown>
-  status: 'pending' | 'approved' | 'dismissed' | 'executed' | 'delivery_failed'
+  draft: EmailDraft | CalendarInviteDraft | DraftWithResult | Record<string, unknown>
+  status: 'pending' | 'approved' | 'dismissed' | 'executed' | 'draft_ready' | 'delivery_failed'
   executed_at: string | null
   created_at: string | null
+}
+
+export interface DraftWithResult {
+  execution_result?: Record<string, unknown>
+  [key: string]: unknown
 }
 
 export interface EmailDraft {
