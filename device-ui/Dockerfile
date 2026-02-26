@@ -46,7 +46,10 @@ ENV KIVY_WINDOW=sdl2
 ENV KIVY_NO_CONSOLELOG=1
 ENV KIVY_LOG_LEVEL=info
 ENV PYTHONUNBUFFERED=1
+# Ensure 'screens', 'config', 'api_client', etc. resolve to /app/src
+ENV PYTHONPATH=/app/src
 
 USER uiuser
 
-CMD ["python", "src/main.py"]
+WORKDIR /app/src
+CMD ["python", "main.py"]
