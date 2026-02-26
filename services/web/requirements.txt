@@ -15,4 +15,5 @@ bcrypt==4.1.2
 google-auth>=2.27.0
 google-auth-oauthlib>=1.2.0
 google-api-python-client>=2.114.0
+fpdf2>=2.7.0
 

@@ -2,6 +2,7 @@
 
 import { Link, useLocation } from 'react-router-dom'
 import { APP_NAME } from '../../utils/constants'
+import { useAuthStore } from '../../store/authStore'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard' },
@@ -11,6 +12,8 @@ const navigation = [
 
 export default function Navbar() {
   const location = useLocation()
+  const logout = useAuthStore((s) => s.logout)
+  const user = useAuthStore((s) => s.user)
 
   return (
     <nav className="bg-white shadow-sm">
@@ -46,6 +49,19 @@ export default function Navbar() {
             </div>
           </div>
 
+          {/* Right side: user + logout */}
+          <div className="hidden sm:flex sm:items-center sm:space-x-4">
+            {user && (
+              <span className="text-sm text-gray-500">{user.display_name}</span>
+            )}
+            <button
+              onClick={logout}
+              className="text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              Logout
+            </button>
+          </div>
+
           {/* Mobile menu (simplified) */}
           <div className="flex items-center sm:hidden">
             <div className="flex space-x-4">
@@ -58,6 +74,12 @@ export default function Navbar() {
                   {item.name}
                 </Link>
               ))}
+              <button
+                onClick={logout}
+                className="text-sm font-medium text-gray-500 hover:text-gray-700"
+              >
+                Logout
+              </button>
             </div>
           </div>
         </div>

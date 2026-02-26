@@ -28,11 +28,14 @@ import time
 from pathlib import Path
 
 LISTEN_PORT = 80
-# Derive project root from this script's location (scripts/ is one level below root)
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETUP_MARKER = os.path.join(_PROJECT_ROOT, "data", "config", ".setup_complete")
 HOTSPOT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hotspot.sh")
 WIFI_SWITCH_DELAY = 3  # seconds — gives phone time to receive the response
+
+# Global connection status: idle | connecting | connected | failed
+_wifi_status = {"state": "idle", "message": ""}
+_wifi_status_lock = threading.Lock()
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -129,10 +132,24 @@ HTML_PAGE = """<!DOCTYPE html>
   <div id="status" class="status"></div>
 </div>
 
+<div class="card" id="connecting-card" style="display:none; text-align:center;">
+  <h1>Connecting…</h1>
+  <p class="subtitle">MeetingBox is connecting to <strong id="connecting-ssid"></strong>.</p>
+  <p class="subtitle" style="margin-top:8px;">This may take up to 30 seconds. Please wait.</p>
+  <div id="connect-loader" class="loader active" style="margin-top:16px;">⏳</div>
+</div>
+
+<div class="card" id="error-card" style="display:none; text-align:center;">
+  <div style="font-size:48px; margin-bottom:16px;">✕</div>
+  <h1 style="color:#FF453A;">Connection Failed</h1>
+  <p id="error-message" class="subtitle" style="margin-top:8px;"></p>
+  <button class="btn" style="margin-top:20px; background:linear-gradient(135deg,#FF6B6B,#FF453A);" onclick="retrySetup()">Try Again</button>
+</div>
+
 <div class="card success-card" id="success-card" style="display:none;">
   <div class="checkmark">&#10003;</div>
   <h1>WiFi Configured!</h1>
-  <p class="subtitle">MeetingBox is connecting to <strong id="connected-ssid"></strong> now.</p>
+  <p class="subtitle">MeetingBox is connected to <strong id="connected-ssid"></strong>.</p>
   <p id="redirect-status" class="subtitle" style="margin-top:12px;">
     Redirecting to dashboard in <strong id="countdown">15</strong>s...
   </p>
@@ -171,12 +188,15 @@ async function scanNetworks() {
   }
 }
 
+var _lastSsid = '';
+
 async function submitWifi(e) {
   e.preventDefault();
-  const ssid = document.getElementById('ssid').value;
-  const password = document.getElementById('password').value;
-  const status = document.getElementById('status');
-  const btn = document.getElementById('connect-btn');
+  var ssid = document.getElementById('ssid').value;
+  var password = document.getElementById('password').value;
+  var status = document.getElementById('status');
+  var btn = document.getElementById('connect-btn');
+  _lastSsid = ssid;
 
   btn.disabled = true;
   btn.textContent = 'Saving...';
@@ -184,17 +204,17 @@ async function submitWifi(e) {
   status.textContent = 'Saving WiFi credentials...';
 
   try {
-    const res = await fetch('/api/connect', {
+    var res = await fetch('/api/connect', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ssid, password})
+      body: JSON.stringify({ssid: ssid, password: password})
     });
-    const data = await res.json();
+    var data = await res.json();
     if (data.status === 'saved') {
       document.getElementById('setup-card').style.display = 'none';
-      document.getElementById('connected-ssid').textContent = ssid;
-      document.getElementById('success-card').style.display = 'block';
-      startRedirectCountdown();
+      document.getElementById('connecting-ssid').textContent = ssid;
+      document.getElementById('connecting-card').style.display = 'block';
+      pollConnectionStatus();
     } else {
       status.className = 'status error';
       status.textContent = data.message || 'Failed to save. Please try again.';
@@ -207,6 +227,54 @@ async function submitWifi(e) {
     btn.disabled = false;
     btn.textContent = 'Connect';
   }
+}
+
+function pollConnectionStatus() {
+  var attempts = 0;
+  var maxAttempts = 30;
+  var interval = setInterval(async function() {
+    attempts++;
+    try {
+      var res = await fetch('/api/status', {signal: AbortSignal.timeout(4000)});
+      var data = await res.json();
+
+      if (data.state === 'connected') {
+        clearInterval(interval);
+        document.getElementById('connecting-card').style.display = 'none';
+        document.getElementById('connected-ssid').textContent = _lastSsid;
+        document.getElementById('success-card').style.display = 'block';
+        startRedirectCountdown();
+        return;
+      }
+      if (data.state === 'failed') {
+        clearInterval(interval);
+        document.getElementById('connecting-card').style.display = 'none';
+        document.getElementById('error-message').textContent =
+          data.message || 'Could not connect to the network.';
+        document.getElementById('error-card').style.display = 'block';
+        return;
+      }
+    } catch(e) {
+      // Phone lost connection to hotspot — keep polling; hotspot may be restarting
+    }
+    if (attempts >= maxAttempts) {
+      clearInterval(interval);
+      document.getElementById('connecting-card').style.display = 'none';
+      document.getElementById('error-message').textContent =
+        'Connection timed out. The password may be wrong or the network is out of range.';
+      document.getElementById('error-card').style.display = 'block';
+    }
+  }, 2000);
+}
+
+function retrySetup() {
+  document.getElementById('error-card').style.display = 'none';
+  document.getElementById('setup-card').style.display = 'block';
+  document.getElementById('status').textContent = '';
+  document.getElementById('connect-btn').disabled = false;
+  document.getElementById('connect-btn').textContent = 'Connect';
+  document.getElementById('password').value = '';
+  scanNetworks();
 }
 
 function startRedirectCountdown() {
@@ -238,6 +306,8 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/scan":
             self._handle_scan()
+        elif self.path == "/api/status":
+            self._handle_status()
         else:
             self._serve_page()
 
@@ -281,7 +351,14 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(networks).encode())
 
+    def _handle_status(self):
+        global _wifi_status
+        with _wifi_status_lock:
+            data = dict(_wifi_status)
+        self._json_response(data)
+
     def _handle_connect(self):
+        global _wifi_status
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length)) if length else {}
         ssid = body.get("ssid", "")
@@ -294,13 +371,11 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
         print(f"[Onboard] Saving WiFi credentials for: {ssid}", flush=True)
 
         try:
-            # Step 1: Remove any stale connection profile
             subprocess.run(
                 ["nmcli", "connection", "delete", ssid],
                 capture_output=True, text=True, timeout=10,
             )
 
-            # Step 2: Create the connection profile (but DON'T activate yet)
             if password:
                 result = subprocess.run(
                     ["nmcli", "connection", "add",
@@ -333,12 +408,13 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
 
             print(f"[Onboard] WiFi profile created for {ssid}", flush=True)
 
-            # Step 3: Respond IMMEDIATELY — phone gets the success page
+            with _wifi_status_lock:
+                _wifi_status = {"state": "connecting", "message": f"Connecting to {ssid}…"}
+
             self._json_response({"status": "saved", "ssid": ssid})
 
-            # Step 4: Schedule the actual WiFi switch in a background thread
-            # This gives the phone ~3 seconds to receive and render the success page
             def delayed_wifi_switch():
+                global _wifi_status
                 print(f"[Onboard] Waiting {WIFI_SWITCH_DELAY}s before switching WiFi...", flush=True)
                 time.sleep(WIFI_SWITCH_DELAY)
 
@@ -350,26 +426,24 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
 
                 if connect_result.returncode == 0:
                     print(f"[Onboard] WiFi connected to {ssid}", flush=True)
+                    with _wifi_status_lock:
+                        _wifi_status = {"state": "connected", "message": ""}
 
-                    # Write setup complete marker
                     marker = Path(SETUP_MARKER)
                     marker.parent.mkdir(parents=True, exist_ok=True)
                     marker.write_text("1")
                     print(f"[Onboard] Setup marker written: {SETUP_MARKER}", flush=True)
 
-                    # Stop the hotspot
                     subprocess.run(
                         ["bash", HOTSPOT_SCRIPT, "stop"],
                         capture_output=True, text=True, timeout=15,
                     )
                     print("[Onboard] Hotspot stopped", flush=True)
 
-                    # Shut down the onboard HTTP server to free port 80
                     print("[Onboard] Stopping onboard server...", flush=True)
                     self.server.shutdown()
                     self.server.server_close()
 
-                    # Wait until port 80 is actually free
                     for _attempt in range(10):
                         check = subprocess.run(
                             ["ss", "-tlnp"],
@@ -381,7 +455,6 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
                     else:
                         print("[Onboard] WARNING: port 80 still held after 10s", flush=True)
 
-                    # Start nginx for normal dashboard access
                     print("[Onboard] Starting nginx for normal operation...", flush=True)
                     subprocess.run(
                         ["docker", "compose", "up", "-d", "nginx"],
@@ -392,16 +465,31 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
                 else:
                     msg = connect_result.stderr.strip() or "Connection failed"
                     print(f"[Onboard] WiFi activation failed: {msg}", flush=True)
-                    # Clean up failed profile
+
                     subprocess.run(
                         ["nmcli", "connection", "delete", ssid],
                         capture_output=True, text=True, timeout=10,
                     )
 
+                    print("[Onboard] Restarting hotspot after failed connection...", flush=True)
+                    subprocess.run(
+                        ["bash", HOTSPOT_SCRIPT, "start"],
+                        capture_output=True, text=True, timeout=20,
+                    )
+                    print("[Onboard] Hotspot restarted — user can retry", flush=True)
+
+                    with _wifi_status_lock:
+                        _wifi_status = {
+                            "state": "failed",
+                            "message": "Wrong password or network unreachable. Please try again.",
+                        }
+
             threading.Thread(target=delayed_wifi_switch, daemon=False).start()
 
         except Exception as e:
             print(f"[Onboard] Error: {e}", flush=True)
+            with _wifi_status_lock:
+                _wifi_status = {"state": "failed", "message": str(e)}
             self._json_response({"status": "failed", "message": str(e)})
 
     def _json_response(self, data, code=200):

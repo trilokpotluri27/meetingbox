@@ -21,7 +21,8 @@ from kivy.clock import Clock
 from screens.base_screen import BaseScreen
 from components.button import PrimaryButton, SecondaryButton
 from components.status_bar import StatusBar
-from config import COLORS, FONT_SIZES, SPACING
+from components.modal_dialog import ModalDialog
+from config import COLORS, FONT_SIZES, SPACING, DASHBOARD_URL
 from async_helper import run_async
 
 logger = logging.getLogger(__name__)
@@ -171,7 +172,7 @@ class SummaryReviewScreen(BaseScreen):
             size_hint_y=None,
             markup=True,
         )
-        lbl.bind(size=lbl.setter('text_size'))
+        lbl.bind(width=lambda w, val: setattr(w, 'text_size', (val, None)))
         lbl.bind(texture_size=lambda w, ts: setattr(w, 'height', ts[1] + 8))
         content.add_widget(lbl)
 
@@ -186,7 +187,7 @@ class SummaryReviewScreen(BaseScreen):
                 size_hint_y=None,
                 height=24,
             )
-            hdr.bind(size=hdr.setter('text_size'))
+            hdr.bind(width=lambda w, val: setattr(w, 'text_size', (val, None)))
             content.add_widget(hdr)
             for d in decisions:
                 dl = Label(
@@ -197,7 +198,7 @@ class SummaryReviewScreen(BaseScreen):
                     valign='top',
                     size_hint_y=None,
                 )
-                dl.bind(size=dl.setter('text_size'))
+                dl.bind(width=lambda w, val: setattr(w, 'text_size', (val, None)))
                 dl.bind(texture_size=lambda w, ts: setattr(w, 'height', ts[1] + 4))
                 content.add_widget(dl)
 
@@ -212,7 +213,7 @@ class SummaryReviewScreen(BaseScreen):
                 size_hint_y=None,
                 height=20,
             )
-            tl.bind(size=tl.setter('text_size'))
+            tl.bind(width=lambda w, val: setattr(w, 'text_size', (val, None)))
             content.add_widget(tl)
 
         scroll.add_widget(content)
@@ -275,7 +276,7 @@ class SummaryReviewScreen(BaseScreen):
                     valign='middle',
                     size_hint=(1, 1),
                 )
-                al.bind(size=al.setter('text_size'))
+                al.bind(width=lambda w, val: setattr(w, 'text_size', (val, None)))
                 row.add_widget(al)
 
                 content.add_widget(row)
@@ -296,9 +297,6 @@ class SummaryReviewScreen(BaseScreen):
         if not self._selected_actions:
             return
 
-        self.execute_btn.text = 'Executing...'
-        self.execute_btn.disabled = True
-
         async def _run():
             for action_id in list(self._selected_actions):
                 try:
@@ -306,15 +304,20 @@ class SummaryReviewScreen(BaseScreen):
                 except Exception as e:
                     logger.error(f"Failed to execute action {action_id}: {e}")
 
-            def _done(_dt):
-                self.execute_btn.text = 'Execute Selected'
-                self.execute_btn.disabled = False
-                self._selected_actions.clear()
-                self._load_actions()
-
-            Clock.schedule_once(_done, 0)
-
         run_async(_run())
+
+        self._selected_actions.clear()
+        dialog = ModalDialog(
+            title='Actions Queued',
+            message=(
+                f'Your actions are being executed.\n'
+                f'Check {DASHBOARD_URL} for details.'
+            ),
+            confirm_text='OK',
+            cancel_text='',
+            on_confirm=lambda: self.goto('home', transition='fade'),
+        )
+        self.add_widget(dialog)
 
     def on_enter(self):
         self._current_tab = 'summary'

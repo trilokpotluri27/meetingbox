@@ -124,24 +124,27 @@ class ModalDialog(FloatLayout):
             spacing=SPACING['button_spacing'],
         )
 
-        cancel_btn = SecondaryButton(
-            text=cancel_text,
-            size_hint=(0.5, 1),
-            font_size=FONT_SIZES['medium'],
-        )
-        cancel_btn.bind(on_press=self._cancel)
-        btn_row.add_widget(cancel_btn)
+        has_cancel = bool(cancel_text)
+        if has_cancel:
+            cancel_btn = SecondaryButton(
+                text=cancel_text,
+                size_hint=(0.5, 1),
+                font_size=FONT_SIZES['medium'],
+            )
+            cancel_btn.bind(on_press=self._cancel)
+            btn_row.add_widget(cancel_btn)
 
+        confirm_hint = 0.5 if has_cancel else 1.0
         if danger:
             confirm_btn = DangerButton(
                 text=confirm_text,
-                size_hint=(0.5, 1),
+                size_hint=(confirm_hint, 1),
                 font_size=FONT_SIZES['medium'],
             )
         else:
             confirm_btn = PrimaryButton(
                 text=confirm_text,
-                size_hint=(0.5, 1),
+                size_hint=(confirm_hint, 1),
                 font_size=FONT_SIZES['medium'],
             )
         confirm_btn.bind(on_press=self._confirm)

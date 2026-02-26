@@ -91,6 +91,17 @@ export default function Dashboard() {
     }
   }
 
+  const handleResetRecording = async () => {
+    try {
+      await meetingsApi.resetRecordingState()
+      setRecordingState('idle')
+      setSessionId(null)
+      toast.success('Recording state reset')
+    } catch {
+      toast.error('Failed to reset recording state')
+    }
+  }
+
   // Stat helpers
   const meetingsThisWeek = meetings.filter((m) => {
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
@@ -148,6 +159,14 @@ export default function Dashboard() {
                 {recordingState === 'processing' && 'Processing...'}
                 {sessionId && ` (${sessionId.slice(0, 8)})`}
               </span>
+            )}
+            {recordingState === 'processing' && (
+              <button
+                onClick={handleResetRecording}
+                className="ml-2 px-3 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Reset
+              </button>
             )}
           </div>
         </div>

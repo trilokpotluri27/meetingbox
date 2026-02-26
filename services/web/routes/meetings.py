@@ -220,6 +220,46 @@ async def resume_meeting(current_user: Optional[dict] = Depends(get_optional_use
   return {"status": "recording"}
 
 
+class MeetingUpdateRequest(BaseModel):
+  title: Optional[str] = None
+  status: Optional[str] = None
+
+
+@router.patch("/{meeting_id}")
+async def update_meeting(meeting_id: str, body: MeetingUpdateRequest, current_user: Optional[dict] = Depends(get_optional_user)):
+  """Update editable fields of a meeting (title, status)."""
+  conn = get_connection()
+  conn.execute("PRAGMA foreign_keys = ON")
+  conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+  try:
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+    meeting = cur.fetchone()
+    if not meeting:
+      raise HTTPException(status_code=404, detail="Meeting not found")
+
+    updates = []
+    params: list[object] = []
+    if body.title is not None:
+      updates.append("title = ?")
+      params.append(body.title)
+    if body.status is not None:
+      updates.append("status = ?")
+      params.append(body.status)
+
+    if not updates:
+      return meeting
+
+    params.append(meeting_id)
+    cur.execute(f"UPDATE meetings SET {', '.join(updates)} WHERE id = ?", params)
+    conn.commit()
+
+    cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+    return cur.fetchone()
+  finally:
+    conn.close()
+
+
 @router.delete("/{meeting_id}")
 async def delete_meeting(meeting_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
   """Delete a meeting and all its associated data."""
@@ -677,6 +717,235 @@ async def summarize_meeting_local(meeting_id: str, current_user: Optional[dict] 
     "sentiment": data.get("sentiment", ""),
     "model_name": LOCAL_LLM_MODEL,
   }
+
+
+class EmailRequest(BaseModel):
+  recipients: List[str]
+
+
+@router.post("/{meeting_id}/email")
+async def email_summary(meeting_id: str, body: EmailRequest, current_user: dict = Depends(get_current_user)):
+  """Email the meeting summary to a list of recipients via Gmail."""
+  from routes.integrations import get_credentials_for_provider
+
+  if not body.recipients:
+    raise HTTPException(status_code=400, detail="At least one recipient email is required.")
+
+  user_id = current_user["id"]
+  creds = get_credentials_for_provider(user_id, "gmail")
+  if not creds:
+    raise HTTPException(status_code=400, detail="Gmail is not connected. Connect it in Settings first.")
+
+  conn = get_connection()
+  conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+  try:
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+    meeting = cur.fetchone()
+    if not meeting:
+      raise HTTPException(status_code=404, detail="Meeting not found")
+
+    cur.execute("SELECT * FROM summaries WHERE meeting_id = ?", (meeting_id,))
+    summary_row = cur.fetchone()
+
+    cur.execute("SELECT * FROM local_summaries WHERE meeting_id = ?", (meeting_id,))
+    local_summary_row = cur.fetchone()
+  finally:
+    conn.close()
+
+  chosen = summary_row or local_summary_row
+  if not chosen:
+    raise HTTPException(status_code=400, detail="No summary available. Summarize the meeting first.")
+
+  title = meeting.get("title", "Untitled Meeting")
+  start = meeting.get("start_time", "")
+  summary_text = chosen.get("summary", "")
+
+  decisions = []
+  try:
+    decisions = json.loads(chosen.get("decisions") or "[]")
+  except (json.JSONDecodeError, TypeError):
+    pass
+
+  topics = []
+  try:
+    topics = json.loads(chosen.get("topics") or "[]")
+  except (json.JSONDecodeError, TypeError):
+    pass
+
+  action_items = []
+  try:
+    action_items = json.loads(chosen.get("action_items") or "[]")
+  except (json.JSONDecodeError, TypeError):
+    pass
+
+  body_parts = [f"Meeting: {title}", f"Date: {start}", "", summary_text]
+  if decisions:
+    body_parts.append("\nDecisions:")
+    for d in decisions:
+      body_parts.append(f"  - {d}")
+  if action_items:
+    body_parts.append("\nAction Items:")
+    for a in action_items:
+      if isinstance(a, dict):
+        line = a.get("task", str(a))
+        if a.get("assignee"):
+          line += f" (assigned to {a['assignee']})"
+        body_parts.append(f"  - {line}")
+      else:
+        body_parts.append(f"  - {a}")
+  if topics:
+    body_parts.append(f"\nTopics: {', '.join(topics)}")
+
+  email_body = "\n".join(body_parts)
+
+  sent_to = []
+  errors = []
+  for recipient in body.recipients:
+    try:
+      from services.gmail import send_email
+      send_email(
+        credentials=creds,
+        to=recipient,
+        subject=f"Meeting Summary: {title}",
+        body=email_body,
+      )
+      sent_to.append(recipient)
+    except Exception as e:
+      logger.error("Failed to email %s: %s", recipient, e)
+      errors.append({"recipient": recipient, "error": str(e)})
+
+  if not sent_to and errors:
+    raise HTTPException(status_code=500, detail=f"Failed to send to all recipients: {errors}")
+
+  return {"status": "sent", "sent_to": sent_to, "errors": errors}
+
+
+@router.get("/{meeting_id}/export/{fmt}")
+async def export_meeting(meeting_id: str, fmt: str, current_user: Optional[dict] = Depends(get_optional_user)):
+  """Export a meeting as TXT or PDF."""
+  from fastapi.responses import Response
+
+  if fmt not in ("txt", "pdf"):
+    raise HTTPException(status_code=400, detail=f"Unsupported export format: {fmt}. Use 'txt' or 'pdf'.")
+
+  conn = get_connection()
+  conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+  try:
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+    meeting = cur.fetchone()
+    if not meeting:
+      raise HTTPException(status_code=404, detail="Meeting not found")
+
+    cur.execute(
+      "SELECT segment_num, start_time, end_time, text, speaker_id FROM segments WHERE meeting_id = ? ORDER BY segment_num",
+      (meeting_id,),
+    )
+    segments = cur.fetchall()
+
+    cur.execute("SELECT * FROM summaries WHERE meeting_id = ?", (meeting_id,))
+    summary_row = cur.fetchone()
+
+    cur.execute("SELECT * FROM local_summaries WHERE meeting_id = ?", (meeting_id,))
+    local_summary_row = cur.fetchone()
+  finally:
+    conn.close()
+
+  title = meeting.get("title", "Untitled Meeting")
+  start = meeting.get("start_time", "")
+
+  # Build transcript text
+  transcript_lines = []
+  for seg in segments:
+    mins = int((seg["start_time"] or 0) // 60)
+    secs = int((seg["start_time"] or 0) % 60)
+    speaker = f" [{seg['speaker_id']}]" if seg.get("speaker_id") else ""
+    transcript_lines.append(f"[{mins:02d}:{secs:02d}]{speaker} {seg['text']}")
+  transcript_text = "\n".join(transcript_lines)
+
+  # Build summary text
+  summary_text = ""
+  for label, row in [("API Summary", summary_row), ("Local Summary", local_summary_row)]:
+    if not row:
+      continue
+    summary_text += f"\n--- {label} ---\n\n"
+    summary_text += f"{row['summary']}\n"
+    try:
+      decisions = json.loads(row.get("decisions") or "[]")
+      if decisions:
+        summary_text += "\nDecisions:\n" + "\n".join(f"  - {d}" for d in decisions) + "\n"
+    except (json.JSONDecodeError, TypeError):
+      pass
+    try:
+      topics = json.loads(row.get("topics") or "[]")
+      if topics:
+        summary_text += "\nTopics: " + ", ".join(topics) + "\n"
+    except (json.JSONDecodeError, TypeError):
+      pass
+    try:
+      actions = json.loads(row.get("action_items") or "[]")
+      if actions:
+        summary_text += "\nAction Items:\n"
+        for a in actions:
+          if isinstance(a, dict):
+            summary_text += f"  - {a.get('task', str(a))}"
+            if a.get("assignee"):
+              summary_text += f" (assigned to {a['assignee']})"
+            summary_text += "\n"
+          else:
+            summary_text += f"  - {a}\n"
+    except (json.JSONDecodeError, TypeError):
+      pass
+    if row.get("sentiment"):
+      summary_text += f"\nSentiment: {row['sentiment']}\n"
+
+  safe_title = title.replace(" ", "_")[:50]
+
+  if fmt == "txt":
+    content = f"{title}\nDate: {start}\n{'=' * 60}\n"
+    if summary_text:
+      content += f"\n{summary_text}\n"
+    content += f"\n{'=' * 60}\nTRANSCRIPT\n{'=' * 60}\n\n{transcript_text}\n"
+    return Response(
+      content=content.encode("utf-8"),
+      media_type="text/plain",
+      headers={"Content-Disposition": f'attachment; filename="{safe_title}.txt"'},
+    )
+
+  # PDF export using fpdf2
+  from fpdf import FPDF
+
+  pdf = FPDF()
+  pdf.set_auto_page_break(auto=True, margin=15)
+  pdf.add_page()
+  pdf.set_font("Helvetica", "B", 16)
+  pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT")
+  pdf.set_font("Helvetica", "", 10)
+  pdf.cell(0, 6, f"Date: {start}", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(4)
+
+  if summary_text:
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Summary", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    for line in summary_text.strip().splitlines():
+      pdf.multi_cell(0, 5, line)
+    pdf.ln(4)
+
+  pdf.set_font("Helvetica", "B", 12)
+  pdf.cell(0, 8, "Transcript", new_x="LMARGIN", new_y="NEXT")
+  pdf.set_font("Helvetica", "", 9)
+  for line in transcript_lines:
+    pdf.multi_cell(0, 4, line)
+
+  pdf_bytes = pdf.output()
+  return Response(
+    content=bytes(pdf_bytes),
+    media_type="application/pdf",
+    headers={"Content-Disposition": f'attachment; filename="{safe_title}.pdf"'},
+  )
 
 
 @router.get("/{meeting_id}", response_model=MeetingDetail)

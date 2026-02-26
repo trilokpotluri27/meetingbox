@@ -133,6 +133,8 @@ class SettingsUpdate(BaseModel):
     brightness: Optional[str] = None
     screen_timeout: Optional[str] = None
     privacy_mode: Optional[bool] = None
+    auto_record: Optional[bool] = None
+    auto_summarize: Optional[bool] = None
     action: Optional[str] = None  # restart / factory_reset
 
 

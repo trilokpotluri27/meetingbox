@@ -33,7 +33,6 @@ from kivy.clock import Clock
 from screens.base_screen import BaseScreen
 from components.button import SecondaryButton, DangerButton
 from components.status_bar import StatusBar
-from components.modal_dialog import ModalDialog
 from config import COLORS, FONT_SIZES, SPACING, BORDER_RADIUS
 from async_helper import run_async
 
@@ -269,23 +268,10 @@ class RecordingScreen(BaseScreen):
         self.waveform.set_active(True)
 
     # ------------------------------------------------------------------
-    # Stop (with confirmation dialog)
+    # Stop
     # ------------------------------------------------------------------
     def _on_stop(self, _inst):
-        dur = self.timer_label.text
-        logger.info("Stop button pressed (duration: %s)", dur)
-        dialog = ModalDialog(
-            title='Stop Recording?',
-            message=f'Meeting: {dur}',
-            confirm_text='STOP',
-            cancel_text='CANCEL',
-            danger=True,
-            on_confirm=self._do_stop,
-        )
-        self.add_widget(dialog)
-
-    def _do_stop(self):
-        logger.info("Stop confirmed via modal")
+        logger.info("Stop button pressed (duration: %s)", self.timer_label.text)
         self.app.stop_recording()
 
     # ------------------------------------------------------------------

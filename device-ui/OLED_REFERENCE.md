@@ -247,3 +247,33 @@ User taps STOP  -> POST /api/meetings/stop  -> Audio service stops
                                              -> Device triggers _auto_summarize (API call)
                                              -> Summary shown on summary_review screen
 ```
+
+---
+
+## WiFi Onboarding – Wrong Password Handling (Feb 2026)
+
+### Problem
+During the onboarding flow, if the user entered the wrong WiFi password:
+1. The onboard server (`scripts/onboard_server.py`) responded `"saved"` immediately (before verifying connection)
+2. The web page showed "WiFi Configured!" even though the connection hadn't been tested
+3. The background `nmcli connection up` failed, leaving wlan0 in a broken state
+4. The hotspot was NOT restarted, so the phone lost connectivity to the Pi
+5. The OLED/Pi desktop could become exposed due to the destabilized network state
+
+### Fix
+**File changed**: `scripts/onboard_server.py`
+
+1. **Added `_wifi_status` global** – thread-safe status tracking (`idle` → `connecting` → `connected` | `failed`)
+2. **Added `GET /api/status` endpoint** – phone polls this to learn the actual connection outcome
+3. **Hotspot recovery on failure** – when `nmcli connection up` fails, the server:
+   - Deletes the bad WiFi profile
+   - Restarts the hotspot via `hotspot.sh start`
+   - Sets `_wifi_status` to `failed` with a user-facing message
+4. **Updated web page JS**:
+   - After saving credentials, shows "Connecting…" screen (not "WiFi Configured!")
+   - Polls `GET /api/status` every 2 seconds (up to 30 attempts = 60s)
+   - On `connected` → shows success + redirect countdown
+   - On `failed` → shows red "Connection Failed" card with the error message and a **Try Again** button
+   - On timeout → shows error with "password may be wrong" message
+   - `retrySetup()` resets the form, clears password field, re-scans networks
+5. **Flow after "Try Again"**: phone reconnects to the restarted hotspot, user re-enters credentials, cycle repeats until correct password is provided
