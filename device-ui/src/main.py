@@ -143,6 +143,7 @@ class MeetingBoxApp(App):
         }
         self.privacy_mode = DEFAULT_PRIVACY_MODE
         self.device_name = 'MeetingBox'
+        self.auto_record = False
 
         # Screen manager & nav stack
         self.screen_manager = None
@@ -280,6 +281,8 @@ class MeetingBoxApp(App):
                     settings.get('screen_timeout', 'never'))
                 privacy = settings.get('privacy_mode', False)
                 self.privacy_mode = privacy
+                auto_record = settings.get('auto_record', False)
+                self.auto_record = auto_record
             except Exception as e:
                 logger.warning("Could not load settings: %s", e)
         run_async(_health())

@@ -154,6 +154,15 @@ class SettingsScreen(BaseScreen):
         )
         self.container.add_widget(self.privacy_item)
 
+        self.auto_record_item = SettingsItem(
+            title='Auto-start from calendar',
+            subtitle='Start recording when a meeting is scheduled',
+            mode='toggle',
+            active=False,
+            on_toggle=self._on_auto_record_toggled,
+        )
+        self.container.add_widget(self.auto_record_item)
+
         # ---- DISPLAY ----
         self.container.add_widget(_section_header('DISPLAY'))
 
@@ -247,9 +256,11 @@ class SettingsScreen(BaseScreen):
     # ------------------------------------------------------------------
     def on_enter(self):
         self._load_system_info()
-        # Sync privacy toggle
+        # Sync privacy and auto_record toggles from app state
         privacy = getattr(self.app, 'privacy_mode', False)
         self.privacy_item.toggle.active = privacy
+        auto_record = getattr(self.app, 'auto_record', False)
+        self.auto_record_item.toggle.active = auto_record
 
     # ------------------------------------------------------------------
     # Data
@@ -301,6 +312,10 @@ class SettingsScreen(BaseScreen):
                     self.auto_delete_item.subtitle_label.text = ad_labels.get(ad, ad)
                     self.brightness_item.subtitle_label.text = br_labels.get(br, br)
                     self.timeout_item.subtitle_label.text = to_labels.get(to, to)
+
+                    auto_rec = settings.get('auto_record', False)
+                    self.app.auto_record = auto_rec
+                    self.auto_record_item.toggle.active = auto_rec
 
                     wifi_ok = bool(info.get('wifi_ssid'))
                     privacy = getattr(self.app, 'privacy_mode', False)
@@ -367,6 +382,15 @@ class SettingsScreen(BaseScreen):
         async def _save():
             try:
                 await self.backend.update_settings({'privacy_mode': active})
+            except Exception:
+                pass
+        run_async(_save())
+
+    def _on_auto_record_toggled(self, active):
+        self.app.auto_record = active
+        async def _save():
+            try:
+                await self.backend.update_settings({'auto_record': active})
             except Exception:
                 pass
         run_async(_save())

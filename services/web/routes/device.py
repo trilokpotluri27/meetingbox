@@ -46,6 +46,7 @@ def _load_settings() -> dict:
         "brightness": "high",
         "screen_timeout": "never",
         "privacy_mode": False,
+        "auto_record": False,
     }
     if SETTINGS_FILE.exists():
         try:
