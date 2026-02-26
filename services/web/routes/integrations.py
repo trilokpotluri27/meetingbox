@@ -247,30 +247,77 @@ async def request_device_code(provider: str, current_user: dict = Depends(get_cu
 
     scopes = SCOPES_BY_PROVIDER[provider]
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            DEVICE_CODE_URL,
-            data={
-                "client_id": GOOGLE_CLIENT_ID,
-                "scope": scopes,
-            },
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.post(
+                DEVICE_CODE_URL,
+                data={
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "scope": scopes,
+                },
+            )
+    except httpx.ConnectError as e:
+        logger.error("Cannot reach Google OAuth endpoint: %s", e)
+        raise HTTPException(
+            status_code=502,
+            detail="Cannot reach Google servers. Check the device's internet connection.",
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail="Request to Google timed out. Check the device's internet connection.",
         )
 
     if resp.status_code != 200:
-        logger.error("Device code request failed: %s %s", resp.status_code, resp.text)
-        raise HTTPException(status_code=502, detail="Failed to get device code from Google.")
+        try:
+            err_data = resp.json()
+            google_error = err_data.get("error", "")
+            google_desc = err_data.get("error_description", resp.text)
+        except Exception:
+            google_error = ""
+            google_desc = resp.text
+
+        logger.error("Device code request failed: %s %s %s", resp.status_code, google_error, google_desc)
+
+        if google_error == "unauthorized_client":
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Google rejected the client. Make sure your OAuth client type is "
+                    "'TVs and Limited Input devices' (not 'Web application') in Google Cloud Console, "
+                    "and that the Gmail API and Google Calendar API are enabled."
+                ),
+            )
+        if google_error == "invalid_client":
+            raise HTTPException(
+                status_code=502,
+                detail="Invalid Google Client ID or Secret. Check your .env file credentials.",
+            )
+
+        raise HTTPException(
+            status_code=502,
+            detail=f"Google OAuth error: {google_desc}",
+        )
 
     data = resp.json()
 
     session_id = str(uuid.uuid4())
     expires_in = data.get("expires_in", 1800)
-    _store_session(session_id, {
-        "user_id": current_user["id"],
-        "provider": provider,
-        "device_code": data["device_code"],
-        "interval": data.get("interval", 5),
-        "scopes": scopes,
-    }, ttl_seconds=expires_in)
+
+    try:
+        _store_session(session_id, {
+            "user_id": current_user["id"],
+            "provider": provider,
+            "device_code": data["device_code"],
+            "interval": data.get("interval", 5),
+            "scopes": scopes,
+        }, ttl_seconds=expires_in)
+    except Exception as e:
+        logger.error("Redis session storage failed: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Internal error: could not store OAuth session. Is Redis running?",
+        )
 
     return {
         "session_id": session_id,

@@ -83,8 +83,13 @@ export default function IntegrationsSettings() {
       })
       startPolling(provider, data.session_id, data.interval)
     } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Failed to start connection'
-      toast.error(msg)
+      const detail = err?.response?.data?.detail
+      const status = err?.response?.status
+      let msg = detail || 'Failed to start connection'
+      if (status === 503 && !detail) {
+        msg = 'Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env.'
+      }
+      toast.error(msg, { duration: 8000 })
       setConnecting(null)
     }
   }
