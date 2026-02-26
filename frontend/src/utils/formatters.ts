@@ -27,6 +27,20 @@ export function formatHours(totalSeconds: number): number {
   return Math.round(totalSeconds / 3600)
 }
 
+/**
+ * Parse a backend timestamp as UTC.
+ * The backend stores naive ISO strings (no tz offset) that are actually UTC.
+ * Without this, the browser interprets them as local time, skewing by the
+ * user's UTC offset.
+ */
+export function parseUTC(iso: string): Date {
+  if (!iso) return new Date(0)
+  if (iso.endsWith('Z') || iso.includes('+') || iso.includes('-', 10)) {
+    return new Date(iso)
+  }
+  return new Date(iso + 'Z')
+}
+
 /** Truncate text with ellipsis */
 export function truncate(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text

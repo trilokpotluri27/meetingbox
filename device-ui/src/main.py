@@ -40,6 +40,7 @@ from config import (
 
 from api_client import BackendClient
 from mock_backend import MockBackendClient
+from hardware import set_brightness, screen_off, screen_on
 
 # Boot-flow screens
 from screens.splash import SplashScreen
@@ -143,6 +144,11 @@ class MeetingBoxApp(App):
         # WebSocket
         self.ws_task = None
 
+        # Screen timeout
+        self._screen_timeout_minutes = 0  # 0 = never
+        self._idle_event = None
+        self._screen_is_off = False
+
     # ==================================================================
     # BUILD
     # ==================================================================
@@ -197,6 +203,8 @@ class MeetingBoxApp(App):
 
         if SHOW_FPS:
             Clock.schedule_interval(self._log_fps, 1.0)
+
+        Window.bind(on_touch_down=self._reset_idle_timer)
 
         logger.info("UI built – starting on splash screen")
         return self.screen_manager
@@ -259,8 +267,14 @@ class MeetingBoxApp(App):
                 if name:
                     self.device_name = name
                     logger.info("Device name loaded: %s", name)
+                brightness = settings.get('brightness', 'high')
+                set_brightness(brightness)
+                self._apply_screen_timeout(
+                    settings.get('screen_timeout', 'never'))
+                privacy = settings.get('privacy_mode', False)
+                self.privacy_mode = privacy
             except Exception as e:
-                logger.warning("Could not load device name: %s", e)
+                logger.warning("Could not load settings: %s", e)
         run_async(_health())
 
     # ==================================================================
@@ -592,6 +606,62 @@ class MeetingBoxApp(App):
             except Exception as e:
                 logger.error(f"Failed to resume: {e}")
         run_async(_resume())
+
+    # ==================================================================
+    # SCREEN TIMEOUT
+    # ==================================================================
+
+    def _apply_screen_timeout(self, value: str):
+        """Configure screen timeout from setting value ('never', '5', '10')."""
+        if self._idle_event:
+            self._idle_event.cancel()
+            self._idle_event = None
+
+        if value == 'never' or not value:
+            self._screen_timeout_minutes = 0
+            return
+
+        try:
+            self._screen_timeout_minutes = int(value)
+        except ValueError:
+            self._screen_timeout_minutes = 0
+            return
+
+        self._reset_idle_timer()
+
+    def _reset_idle_timer(self, *_args):
+        """Reset the idle countdown. Called on every touch."""
+        if self._screen_is_off:
+            self._screen_is_off = False
+            brightness = 'high'
+            try:
+                async def _get_br():
+                    s = await self.backend.get_settings()
+                    return s.get('brightness', 'high')
+                import asyncio
+                loop = get_async_loop()
+                if loop and loop.is_running():
+                    asyncio.run_coroutine_threadsafe(_get_br(), loop)
+            except Exception:
+                pass
+            screen_on(brightness)
+
+        if self._idle_event:
+            self._idle_event.cancel()
+
+        if self._screen_timeout_minutes > 0:
+            secs = self._screen_timeout_minutes * 60
+            self._idle_event = Clock.schedule_once(
+                self._on_idle_timeout, secs)
+
+    def _on_idle_timeout(self, _dt):
+        """Fires when idle timeout expires -- turn screen off."""
+        if self.recording_state.get('active'):
+            self._reset_idle_timer()
+            return
+        logger.info("Screen timeout — turning off display")
+        self._screen_is_off = True
+        screen_off()
 
     # ==================================================================
     # UTILITIES

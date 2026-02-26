@@ -76,13 +76,13 @@ class SettingsScreen(BaseScreen):
             title='Device Name',
             subtitle='MeetingBox',
             mode='arrow',
-            on_press=lambda _: None,  # edit via web
+            on_press=lambda _: self._show_device_name_dialog(),
         )
         self.container.add_widget(self.device_name_item)
 
         self.model_item = SettingsItem(
             title='Model / Serial',
-            subtitle=f'{DEVICE_MODEL}\nSerial: MB-2026-00001234',
+            subtitle=f'{DEVICE_MODEL}\nSerial: Loading…',
             mode='info',
         )
         self.model_item.height = 70
@@ -94,7 +94,8 @@ class SettingsScreen(BaseScreen):
         self.wifi_item = SettingsItem(
             title='WiFi',
             subtitle='Loading…',
-            mode='info',
+            mode='arrow',
+            on_press=lambda _: self.goto('wifi', transition='slide_left'),
         )
         self.container.add_widget(self.wifi_item)
 
@@ -271,20 +272,36 @@ class SettingsScreen(BaseScreen):
                 storage_text = f'{su:.0f}/{st:.0f}GB used · {sf:.0f}GB free\n{mc} meetings'
 
                 fw = info.get('firmware_version', '?')
+                serial = info.get('serial_number', 'MB-00000000')
                 up_s = info.get('uptime', 0)
                 up_d = up_s // 86400
                 up_h = (up_s % 86400) // 3600
+
+                settings = await self.backend.get_settings()
+                ad = settings.get('auto_delete_days', 'never')
+                ad_labels = {'never': 'Never', '30': 'After 30 days',
+                             '60': 'After 60 days', '90': 'After 90 days'}
+                br = settings.get('brightness', 'high')
+                br_labels = {'low': 'Low', 'medium': 'Medium', 'high': 'High'}
+                to = settings.get('screen_timeout', 'never')
+                to_labels = {'never': 'Never', '5': 'After 5 min',
+                             '10': 'After 10 min'}
 
                 def _update(_dt):
                     self.wifi_item.subtitle_label.text = wifi_text
                     self.storage_item.subtitle_label.text = storage_text
                     self.firmware_item.subtitle_label.text = fw
+                    self.model_item.subtitle_label.text = (
+                        f'{DEVICE_MODEL}\nSerial: {serial}')
                     self.uptime_item.subtitle_label.text = f'{up_d}d {up_h}h'
                     name = info.get('device_name', 'MeetingBox')
                     self.device_name_item.subtitle_label.text = name
                     self.app.device_name = name
 
-                    # Footer
+                    self.auto_delete_item.subtitle_label.text = ad_labels.get(ad, ad)
+                    self.brightness_item.subtitle_label.text = br_labels.get(br, br)
+                    self.timeout_item.subtitle_label.text = to_labels.get(to, to)
+
                     wifi_ok = bool(info.get('wifi_ssid'))
                     privacy = getattr(self.app, 'privacy_mode', False)
                     self.update_footer(wifi_ok=wifi_ok, free_gb=sf,
@@ -294,6 +311,52 @@ class SettingsScreen(BaseScreen):
             except Exception:
                 pass
 
+        run_async(_fetch())
+        self._load_integrations()
+
+    # ------------------------------------------------------------------
+    # Device name info dialog
+    # ------------------------------------------------------------------
+    def _show_device_name_dialog(self):
+        dialog = ModalDialog(
+            title='Device Name',
+            message=(f'To change your device name,\n'
+                     f'visit {DASHBOARD_URL} on your\n'
+                     f'phone or laptop.'),
+            confirm_text='OK',
+            cancel_text='',
+        )
+        self.add_widget(dialog)
+
+    # ------------------------------------------------------------------
+    # Integrations
+    # ------------------------------------------------------------------
+    def _load_integrations(self):
+        async def _fetch():
+            try:
+                integrations = await self.backend.get_integrations()
+                gmail_status = f'Configure at {DASHBOARD_URL}'
+                cal_status = f'Configure at {DASHBOARD_URL}'
+                for integ in integrations:
+                    name = (integ.get('name') or '').lower()
+                    connected = integ.get('connected', False)
+                    email = integ.get('email', '')
+                    if 'gmail' in name or 'mail' in name:
+                        gmail_status = (f'Connected ({email})'
+                                        if connected
+                                        else f'Not connected · {DASHBOARD_URL}')
+                    elif 'calendar' in name:
+                        cal_status = (f'Connected ({email})'
+                                      if connected
+                                      else f'Not connected · {DASHBOARD_URL}')
+
+                def _update(_dt):
+                    self.gmail_item.subtitle_label.text = gmail_status
+                    self.calendar_item.subtitle_label.text = cal_status
+
+                Clock.schedule_once(_update, 0)
+            except Exception:
+                pass
         run_async(_fetch())
 
     # ------------------------------------------------------------------

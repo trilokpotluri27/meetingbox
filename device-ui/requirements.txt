@@ -12,6 +12,9 @@ aiofiles>=23.2.1
 # Image handling
 Pillow>=10.2.0
 
+# Audio capture (mic test)
+sounddevice>=0.4.6
+
 # QR Code generation
 qrcode>=7.4.2
 

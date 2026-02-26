@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { meetingsApi } from '../api/meetings'
+import { parseUTC } from '../utils/formatters'
 import { actionsApi } from '../api/actions'
 import type { MeetingDetail as MeetingDetailType } from '../types/meeting'
 import type { AgenticAction } from '../types/action'
@@ -29,6 +30,8 @@ export default function MeetingDetailPage() {
   const [summarizingLocal, setSummarizingLocal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
 
   const loadMeetingData = useCallback(async () => {
     if (!id) return
@@ -132,6 +135,29 @@ export default function MeetingDetailPage() {
     }
   }
 
+  const handleStartRename = () => {
+    setEditTitle(meeting?.title || '')
+    setIsEditingTitle(true)
+  }
+
+  const handleSaveRename = async () => {
+    if (!id || !editTitle.trim()) return
+    try {
+      await meetingsApi.update(id, { title: editTitle.trim() })
+      setMeeting((prev) => prev ? { ...prev, title: editTitle.trim() } : prev)
+      toast.success('Meeting renamed')
+    } catch {
+      toast.error('Failed to rename meeting')
+    } finally {
+      setIsEditingTitle(false)
+    }
+  }
+
+  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleSaveRename()
+    if (e.key === 'Escape') setIsEditingTitle(false)
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -176,9 +202,45 @@ export default function MeetingDetailPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">{meeting.title}</h1>
+          {isEditingTitle ? (
+            <div className="flex items-center gap-2 mb-2">
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={handleRenameKeyDown}
+                autoFocus
+                className="text-2xl font-bold text-gray-900 border border-gray-300 rounded-lg px-3 py-1 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              />
+              <button
+                onClick={handleSaveRename}
+                className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700"
+              >
+                Save
+              </button>
+              <button
+                onClick={() => setIsEditingTitle(false)}
+                className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 mb-2 group">
+              <h1 className="text-3xl font-bold text-gray-900">{meeting.title}</h1>
+              <button
+                onClick={handleStartRename}
+                title="Rename meeting"
+                className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+            </div>
+          )}
           <div className="flex items-center space-x-4 text-sm text-gray-600">
-            <span>{format(new Date(meeting.start_time), 'PPpp')}</span>
+            <span>{format(parseUTC(meeting.start_time), 'PPpp')}</span>
             {meeting.duration != null && (
               <>
                 <span>&bull;</span>

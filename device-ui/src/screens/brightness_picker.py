@@ -5,6 +5,7 @@ Options: Low, Medium, High
 """
 
 from screens.picker_base import PickerBaseScreen
+from hardware import set_brightness
 
 
 class BrightnessPickerScreen(PickerBaseScreen):
@@ -17,3 +18,7 @@ class BrightnessPickerScreen(PickerBaseScreen):
     ]
     _setting_key = 'brightness'
     _default = 'high'
+
+    def _save_setting(self):
+        super()._save_setting()
+        set_brightness(self._selected)

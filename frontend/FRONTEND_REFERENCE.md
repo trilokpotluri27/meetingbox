@@ -60,22 +60,27 @@
 | Start Recording | `handleStartRecording` | `POST /api/meetings/start` | `routes/meetings.py` | Working |
 | Stop Recording | `handleStopRecording` | `POST /api/meetings/stop` | `routes/meetings.py` | Working |
 | Reset Processing | `handleResetRecording` | `POST /api/meetings/reset-recording-state` | `routes/meetings.py` | Working |
-| Date filter buttons | `setFilter(f)` | None (local state) | N/A | Working |
+| Date filter buttons | `setFilter(f)` | None (local state, default: `'today'`) | N/A | Working |
 | Search input | `setSearchQuery` | None (local filter) | N/A | Working |
 | Meeting card click | navigation | None | N/A | Working |
 | Delete meeting (card) | `handleDeleteMeeting` | `DELETE /api/meetings/{id}` | `routes/meetings.py` | Working |
 | Polls recording status | `pollRecordingStatus` | `GET /api/meetings/recording-status` | `routes/meetings.py` | Working |
+| Disk warning banner | navigates to `/system` | `GET /api/system/status` (on mount) | `routes/system.py` | Working |
+| Stats: This Week | computed | None (from meetings list) | N/A | Working |
+| Stats: Total Hours | computed from `duration` | None (duration now computed by backend list endpoint) | N/A | Working |
+| Stats: Pending Actions | computed from `pending_actions` | None (pending_actions now returned by backend list endpoint via subquery) | N/A | Working |
 
 ### Meeting Detail (`pages/MeetingDetail.tsx`)
 
 | UI Element | Handler | API Call | Backend Route | Status |
 |------------|---------|----------|---------------|--------|
+| Rename title (pencil icon) | `handleStartRename` / `handleSaveRename` | `PATCH /api/meetings/{id}` | `routes/meetings.py` | Working |
 | Export PDF | `handleExport('pdf')` | `GET /api/meetings/{id}/export/pdf` | `routes/meetings.py` | Working |
 | Export TXT | `handleExport('txt')` | `GET /api/meetings/{id}/export/txt` | `routes/meetings.py` | Working |
 | Delete button | `setShowDeleteConfirm(true)` | None (opens modal) | N/A | Working |
 | Delete confirm | `handleDeleteMeeting` | `DELETE /api/meetings/{id}` | `routes/meetings.py` | Working |
-| Summarize with API | `handleSummarize` | `POST /api/meetings/{id}/summarize` | `routes/meetings.py` | Working |
-| Summarize Locally | `handleSummarizeLocal` | `POST /api/meetings/{id}/summarize-local` | `routes/meetings.py` | Working |
+| Summarize with API | `handleSummarize` | `POST /api/meetings/{id}/summarize` (also auto-sets title from summary) | `routes/meetings.py` | Working |
+| Summarize Locally | `handleSummarizeLocal` | `POST /api/meetings/{id}/summarize-local` (also auto-sets title from summary) | `routes/meetings.py` | Working |
 | Tab navigation | `setActiveTab` | None (local state) | N/A | Working |
 | Action dismiss | `ActionCard.handleDismiss` | `POST /api/actions/{id}/dismiss` | `routes/actions.py` | Working |
 | Action approve+execute | `ActionCard.handleExecute` | `POST /api/actions/{id}/approve` then `POST /api/actions/{id}/execute` | `routes/actions.py` | Working |
@@ -136,6 +141,8 @@
 |------------|---------|----------|---------------|--------|
 | Retry | inline | `GET /api/system/status` | `routes/system.py` | Working |
 | Auto-refresh | `useEffect` interval | `GET /api/system/status` | `routes/system.py` | Working |
+| Free up Space button | `setShowCleanup(true)` | None (opens modal) | N/A | Working |
+| Delete oldest N meetings | `handleCleanup` | `POST /api/system/cleanup?count=N` | `routes/system.py` | Working |
 
 ### Navbar (`components/layout/Navbar.tsx`)
 
@@ -162,6 +169,7 @@
 | `meetings.ts` | `summarizeLocal` | POST | `/api/meetings/{id}/summarize-local` | Yes | MeetingDetail |
 | `meetings.ts` | `export` | GET | `/api/meetings/{id}/export/{format}` | Yes | MeetingDetail |
 | `meetings.ts` | `emailSummary` | POST | `/api/meetings/{id}/email` | Yes | Not yet |
+| `meetings.ts` | `cleanupOldest` | POST | `/api/system/cleanup?count=N` | Yes | SystemStatus |
 | `actions.ts` | `list` | GET | `/api/meetings/{id}/actions` | Yes | MeetingDetail |
 | `actions.ts` | `approve` | POST | `/api/actions/{id}/approve` | Yes | ActionCard |
 | `actions.ts` | `dismiss` | POST | `/api/actions/{id}/dismiss` | Yes | ActionCard |
@@ -198,6 +206,14 @@ The `SettingsUpdate` Pydantic model accepts these fields:
 | `action` | `Optional[str]` | `restart` / `factory_reset` |
 
 ---
+
+## Timestamp Handling
+
+The backend (running in a Docker container with UTC timezone) stores naive ISO timestamps without timezone info (e.g., `2026-02-26T14:20:15.123456`). The frontend must treat these as UTC by appending `Z` before parsing. Use `parseUTC()` from `utils/formatters.ts` for all backend timestamps instead of `new Date(iso)`.
+
+## Meeting Title Auto-Generation
+
+When a meeting is summarized (either via API or locally), the backend auto-generates a human-readable title from the summary topics or first sentence. This only replaces titles that still have the default `"Meeting {session_id}"` format. Users can also manually rename meetings via the pencil icon on the Meeting Detail page.
 
 ## Environment & Config
 

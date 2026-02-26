@@ -277,3 +277,29 @@ During the onboarding flow, if the user entered the wrong WiFi password:
    - On timeout → shows error with "password may be wrong" message
    - `retrySetup()` resets the form, clears password field, re-scans networks
 5. **Flow after "Try Again"**: phone reconnects to the restarted hotspot, user re-enters credentials, cycle repeats until correct password is provided
+
+---
+
+## Settings Screen – Full Activation (Feb 2026)
+
+### Summary
+Audited all 18 settings items. **Before**: 6 functional, 2 partial, 10 non-functional. **After**: all items operational.
+
+### Changes by Item
+
+| Item | Fix | File(s) |
+|------|-----|---------|
+| Device Name | Arrow now shows ModalDialog directing user to meetingbox.local | `settings.py` |
+| Model/Serial | Fetches real `serial_number` from `GET /api/system/device-info` | `settings.py` |
+| WiFi | Changed from info-only to arrow mode; navigates to existing WiFi screen | `settings.py` |
+| Auto-delete | Backend now runs a background thread every 6h that deletes meetings older than the configured threshold | `services/web/main.py` |
+| Screen Brightness | New `hardware.py` module writes to `/sys/class/backlight/*/brightness`. Applied on picker save + app startup | `hardware.py`, `brightness_picker.py`, `main.py` |
+| Screen Timeout | Idle timer in `main.py` resets on touch, blanks screen after N minutes, restores on next touch. Skipped during active recording | `main.py`, `timeout_picker.py` |
+| Privacy Mode | Already enforced in `_auto_summarize()` (calls `summarize-local` when active). Now also loads from backend settings on startup | `main.py` |
+| Microphone Test | Replaced `random.randint()` fake bars with real `sounddevice` audio capture. Shows RMS levels, "Good/Low/No Sound" indicator | `mic_test.py`, `requirements.txt` |
+| Gmail/Calendar | Fetches integration status from `GET /api/device/integrations`. Shows "Connected (email)" or "Not connected" | `settings.py` |
+| All Pickers | Added `on_enter` to `PickerBaseScreen` that fetches current saved value and pre-selects it | `picker_base.py` |
+| Settings subtitles | Auto-delete, Brightness, Timeout subtitles now reflect saved values (fetched from backend on enter) | `settings.py` |
+
+### New File
+- `device-ui/src/hardware.py` — RPi backlight control (brightness set, screen on/off) via sysfs with sudo fallback

@@ -61,6 +61,22 @@ def _generate_session_id() -> str:
     suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
     return f"{ts}_{suffix}"
 
+
+def _derive_title(summary: str, topics: list) -> str:
+    """Derive a short human-readable meeting title from the summary or topics."""
+    if topics:
+      clean = [t.strip().lstrip("#") for t in topics[:3] if isinstance(t, str) and t.strip()]
+      if clean:
+        title = " / ".join(clean)
+        return title[:80]
+    if summary:
+      first = summary.split(".")[0].strip()
+      if len(first) > 80:
+        first = first[:77] + "..."
+      if first:
+        return first
+    return ""
+
 # Accepted upload extensions; non-WAV are converted with ffmpeg to 16kHz mono WAV
 UPLOAD_AUDIO_EXTENSIONS = {".wav", ".webm", ".ogg", ".mp4", ".m4a"}
 
@@ -387,24 +403,38 @@ async def upload_audio(file: UploadFile = File(...), current_user: dict = Depend
   return {"session_id": session_id, "path": str(dest_wav), "status": "ingested"}
 
 
-@router.get("/", response_model=List[MeetingResponse])
+@router.get("/")
 async def list_meetings(limit: int = 50, offset: int = 0, status: Optional[str] = None, current_user: Optional[dict] = Depends(get_optional_user)):
   conn = get_connection()
   conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}  # type: ignore
   try:
     cur = conn.cursor()
-    query = "SELECT * FROM meetings"
+    query = """
+      SELECT m.*,
+             (SELECT COUNT(*) FROM actions a WHERE a.meeting_id = m.id AND a.status = 'pending') AS pending_actions
+      FROM meetings m
+    """
     params: list[object] = []
     if status:
-      query += " WHERE status = ?"
+      query += " WHERE m.status = ?"
       params.append(status)
-    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    query += " ORDER BY m.created_at DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
     cur.execute(query, params)
     rows = cur.fetchall()
   finally:
     conn.close()
+
+  for row in rows:
+    if row.get("duration") is None and row.get("start_time") and row.get("end_time"):
+      try:
+        start_dt = datetime.fromisoformat(row["start_time"])
+        end_dt = datetime.fromisoformat(row["end_time"])
+        row["duration"] = int((end_dt - start_dt).total_seconds())
+      except Exception:
+        pass
+
   return rows
 
 
@@ -527,7 +557,11 @@ async def summarize_meeting(meeting_id: str, current_user: Optional[dict] = Depe
         datetime.now().isoformat(),
       ),
     )
-    cur.execute("UPDATE meetings SET status = 'completed', end_time = ? WHERE id = ?", (datetime.now().isoformat(), meeting_id))
+    auto_title = _derive_title(data.get("summary", ""), data.get("topics", []))
+    if auto_title and (meeting.get("title", "").startswith("Meeting ") or not meeting.get("title")):
+      cur.execute("UPDATE meetings SET status = 'completed', end_time = ?, title = ? WHERE id = ?", (datetime.now().isoformat(), auto_title, meeting_id))
+    else:
+      cur.execute("UPDATE meetings SET status = 'completed', end_time = ? WHERE id = ?", (datetime.now().isoformat(), meeting_id))
     conn.commit()
   finally:
     conn.close()
@@ -702,6 +736,9 @@ async def summarize_meeting_local(meeting_id: str, current_user: Optional[dict] 
         datetime.now().isoformat(),
       ),
     )
+    auto_title = _derive_title(data.get("summary", ""), data.get("topics", []))
+    if auto_title and (meeting.get("title", "").startswith("Meeting ") or not meeting.get("title")):
+      cur.execute("UPDATE meetings SET title = ? WHERE id = ?", (auto_title, meeting_id))
     conn.commit()
   finally:
     conn.close()

@@ -88,4 +88,10 @@ export const meetingsApi = {
   emailSummary: async (id: string, recipients: string[]): Promise<void> => {
     await client.post(`/api/meetings/${id}/email`, { recipients })
   },
+
+  // Delete the N oldest meetings to free up disk space
+  cleanupOldest: async (count: number): Promise<{ deleted: number; ids: string[] }> => {
+    const response = await client.post('/api/system/cleanup', null, { params: { count } })
+    return response.data
+  },
 }

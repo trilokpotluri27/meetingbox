@@ -17,3 +17,9 @@ class TimeoutPickerScreen(PickerBaseScreen):
     ]
     _setting_key = 'screen_timeout'
     _default = 'never'
+
+    def _save_setting(self):
+        super()._save_setting()
+        app = self.app
+        if hasattr(app, '_apply_screen_timeout'):
+            app._apply_screen_timeout(self._selected)

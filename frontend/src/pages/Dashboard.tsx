@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { apiClient } from '../api/client'
 import { useMeetings } from '../hooks/useMeetings'
 import MeetingList from '../components/meeting/MeetingList'
 import LoadingSpinner from '../components/ui/LoadingSpinner'
 import type { DateFilter } from '../utils/constants'
 import { DATE_FILTERS } from '../utils/constants'
 import { meetingsApi } from '../api/meetings'
+import { parseUTC } from '../utils/formatters'
 import toast from 'react-hot-toast'
 
 type RecordingState = 'idle' | 'recording' | 'processing'
@@ -16,11 +18,12 @@ export default function Dashboard() {
   const { meetings, loading, startRecording, deleteMeeting } = useMeetings()
   const navigate = useNavigate()
   const [searchQuery, setSearchQuery] = useState('')
-  const [filter, setFilter] = useState<DateFilter>('all')
+  const [filter, setFilter] = useState<DateFilter>('today')
 
   // Device recording state (polled)
   const [recordingState, setRecordingState] = useState<RecordingState>('idle')
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [diskPercent, setDiskPercent] = useState<number | null>(null)
 
   const pollRecordingStatus = useCallback(async () => {
     try {
@@ -38,13 +41,19 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [pollRecordingStatus])
 
+  useEffect(() => {
+    apiClient.get('/api/system/status')
+      .then((res) => setDiskPercent(res.data?.system?.disk_percent ?? null))
+      .catch(() => {})
+  }, [])
+
   // Filter meetings by search and date
   const filteredMeetings = meetings.filter((meeting) => {
     if (searchQuery && !(meeting.title ?? '').toLowerCase().includes(searchQuery.toLowerCase())) {
       return false
     }
     const now = new Date()
-    const meetingDate = new Date(meeting.start_time)
+    const meetingDate = parseUTC(meeting.start_time)
     switch (filter) {
       case 'today':
         return meetingDate.toDateString() === now.toDateString()
@@ -105,7 +114,7 @@ export default function Dashboard() {
   // Stat helpers
   const meetingsThisWeek = meetings.filter((m) => {
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-    return new Date(m.start_time) >= weekAgo
+    return parseUTC(m.start_time) >= weekAgo
   }).length
 
   const totalHours = Math.round(
@@ -170,6 +179,31 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+
+        {/* Disk warning */}
+        {diskPercent !== null && diskPercent > 80 && (
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-center justify-between">
+            <div className="flex items-start">
+              <svg className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-red-800">
+                  Disk usage is at {diskPercent.toFixed(0)}%
+                </h3>
+                <p className="mt-1 text-sm text-red-700">
+                  Free up space to keep recording smoothly.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => navigate('/system')}
+              className="ml-4 px-4 py-2 text-sm font-medium text-red-700 bg-white border border-red-300 rounded-lg hover:bg-red-50 whitespace-nowrap"
+            >
+              Free up Space
+            </button>
+          </div>
+        )}
 
         {/* Stats cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">

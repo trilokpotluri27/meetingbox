@@ -10,7 +10,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import redis
 
-from database import init_database
+from database import init_database, get_connection
 from routes.meetings import router as meetings_router
 from routes.system import router as system_router
 from routes.device import router as device_router
@@ -95,12 +95,62 @@ async def _redis_event_relay(queue: asyncio.Queue) -> None:
       break
 
 
+def _auto_delete_thread() -> None:
+  """Periodically delete meetings older than the configured auto_delete_days setting."""
+  from datetime import datetime, timedelta
+  from pathlib import Path
+  from routes.device import _load_settings
+
+  INTERVAL = 6 * 3600  # run every 6 hours
+
+  while True:
+    try:
+      settings = _load_settings()
+      ad = settings.get("auto_delete_days", "never")
+      if ad and ad != "never":
+        try:
+          days = int(ad)
+        except ValueError:
+          days = 0
+        if days > 0:
+          cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+          conn = get_connection()
+          try:
+            cur = conn.cursor()
+            cur.execute(
+              "SELECT id, audio_path FROM meetings WHERE created_at < ?",
+              (cutoff,),
+            )
+            rows = cur.fetchall()
+            for mid, audio_path in rows:
+              cur.execute("DELETE FROM actions WHERE meeting_id = ?", (mid,))
+              cur.execute("DELETE FROM segments WHERE meeting_id = ?", (mid,))
+              cur.execute("DELETE FROM summaries WHERE meeting_id = ?", (mid,))
+              cur.execute("DELETE FROM local_summaries WHERE meeting_id = ?", (mid,))
+              cur.execute("DELETE FROM meetings WHERE id = ?", (mid,))
+              if audio_path:
+                p = Path(audio_path)
+                if p.exists():
+                  p.unlink(missing_ok=True)
+            conn.commit()
+            if rows:
+              logger.info("Auto-delete: removed %d meetings older than %d days", len(rows), days)
+          finally:
+            conn.close()
+    except Exception as e:
+      logger.warning("Auto-delete error: %s", e)
+
+    time.sleep(INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[override]
   loop = asyncio.get_running_loop()
   queue: asyncio.Queue = asyncio.Queue()
   thread = threading.Thread(target=_redis_listener_thread, args=(queue, loop), daemon=True)
   thread.start()
+  ad_thread = threading.Thread(target=_auto_delete_thread, daemon=True)
+  ad_thread.start()
   relay = asyncio.create_task(_redis_event_relay(queue))
   yield
   relay.cancel()

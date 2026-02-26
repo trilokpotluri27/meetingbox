@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom'
 import { formatDistanceToNow } from 'date-fns'
 import type { Meeting } from '../../types/meeting'
 import { MEETING_STATUSES } from '../../utils/constants'
+import { parseUTC } from '../../utils/formatters'
 import Modal from '../ui/Modal'
 import Button from '../ui/Button'
 
@@ -78,7 +79,7 @@ export default function MeetingCard({ meeting, onDelete }: MeetingCardProps) {
               <svg className="w-4 h-4 mr-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              {formatDistanceToNow(new Date(meeting.start_time), { addSuffix: true })}
+              {formatDistanceToNow(parseUTC(meeting.start_time), { addSuffix: true })}
             </div>
 
             {meeting.duration != null && (

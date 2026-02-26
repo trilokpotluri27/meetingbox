@@ -12,6 +12,7 @@ from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.widget import Widget
 from kivy.graphics import Color, RoundedRectangle
 
+from kivy.clock import Clock
 from screens.base_screen import BaseScreen
 from components.status_bar import StatusBar
 from config import COLORS, FONT_SIZES, SPACING, BORDER_RADIUS
@@ -145,6 +146,20 @@ class PickerBaseScreen(BaseScreen):
         root.add_widget(footer)
 
         self.add_widget(root)
+
+    def on_enter(self):
+        async def _load():
+            try:
+                settings = await self.backend.get_settings()
+                saved = settings.get(self._setting_key, self._default)
+                def _apply(_dt):
+                    self._selected = saved
+                    for r in self._rows:
+                        r.set_selected(r._value == saved)
+                Clock.schedule_once(_apply, 0)
+            except Exception:
+                pass
+        run_async(_load())
 
     def _on_option_selected(self, row):
         self._selected = row._value
