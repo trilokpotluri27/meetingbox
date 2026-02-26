@@ -16,7 +16,7 @@ import SummaryCard from '../components/meeting/SummaryCard'
 import ActionCard from '../components/actions/ActionCard'
 import toast from 'react-hot-toast'
 
-type Tab = 'summary' | 'transcript' | 'actions'
+type Tab = 'summary' | 'transcript' | 'actions' | 'recording'
 
 export default function MeetingDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -325,7 +325,7 @@ export default function MeetingDetailPage() {
       {/* Tabs */}
       <div className="border-b border-gray-200 mb-6">
         <nav className="flex space-x-8">
-          {(['summary', 'transcript', 'actions'] as const).map((tab) => (
+          {(['summary', 'transcript', 'actions', 'recording'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -385,6 +385,44 @@ export default function MeetingDetailPage() {
                   onApproved={handleActionApproved}
                 />
               ))
+            )}
+          </div>
+        )}
+
+        {activeTab === 'recording' && (
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            {meeting.audio_path ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 mb-2">
+                  <svg className="h-6 w-6 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6v12m-3.536-2.464a5 5 0 010-7.072M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <h3 className="text-lg font-semibold text-gray-900">Audio Recording</h3>
+                </div>
+                <audio
+                  controls
+                  className="w-full"
+                  src={meetingsApi.getAudioUrl(meeting.id)}
+                  preload="metadata"
+                >
+                  Your browser does not support the audio element.
+                </audio>
+                <p className="text-sm text-gray-500">
+                  {meeting.duration != null
+                    ? `Duration: ${Math.floor(meeting.duration / 60)}m ${meeting.duration % 60}s`
+                    : 'Duration unknown'}
+                </p>
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+                <h3 className="mt-2 text-sm font-medium text-gray-900">No recording available</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  The audio recording for this meeting is not available.
+                </p>
+              </div>
             )}
           </div>
         )}

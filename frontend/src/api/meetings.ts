@@ -76,6 +76,11 @@ export const meetingsApi = {
     await client.post(`/api/meetings/${id}/summarize-local`)
   },
 
+  // Get audio recording URL for a meeting
+  getAudioUrl: (id: string): string => {
+    return `/api/meetings/${id}/audio`
+  },
+
   // Export meeting to file
   export: async (id: string, format: 'pdf' | 'docx' | 'txt'): Promise<Blob> => {
     const response = await client.get(`/api/meetings/${id}/export/${format}`, {

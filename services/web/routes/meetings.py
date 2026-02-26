@@ -872,6 +872,45 @@ async def email_summary(meeting_id: str, body: EmailRequest, current_user: dict 
   return {"status": "sent", "sent_to": sent_to, "errors": errors}
 
 
+@router.get("/{meeting_id}/audio")
+async def get_meeting_audio(meeting_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
+  """Stream the audio recording file for a meeting."""
+  from fastapi.responses import FileResponse
+
+  conn = get_connection()
+  try:
+    cur = conn.cursor()
+    cur.execute("SELECT audio_path FROM meetings WHERE id = ?", (meeting_id,))
+    row = cur.fetchone()
+    if not row:
+      raise HTTPException(status_code=404, detail="Meeting not found")
+    audio_path = row[0]
+  finally:
+    conn.close()
+
+  if not audio_path:
+    raise HTTPException(status_code=404, detail="No audio recording available for this meeting")
+
+  p = Path(audio_path)
+  if not p.exists():
+    raise HTTPException(status_code=404, detail="Audio file not found on disk")
+
+  media_type = "audio/wav"
+  suffix = p.suffix.lower()
+  if suffix == ".webm":
+    media_type = "audio/webm"
+  elif suffix == ".ogg":
+    media_type = "audio/ogg"
+  elif suffix in (".mp4", ".m4a"):
+    media_type = "audio/mp4"
+
+  return FileResponse(
+    path=str(p),
+    media_type=media_type,
+    filename=p.name,
+  )
+
+
 @router.get("/{meeting_id}/export/{fmt}")
 async def export_meeting(meeting_id: str, fmt: str, current_user: Optional[dict] = Depends(get_optional_user)):
   """Export a meeting as TXT or PDF."""
