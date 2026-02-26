@@ -11,8 +11,8 @@ interface GmailConnectProps {
 export default function GmailConnect({ connected, onStatusChange }: GmailConnectProps) {
   const handleConnect = async () => {
     try {
-      const { verification_url } = await integrationsApi.requestDeviceCode('gmail')
-      window.location.href = verification_url
+      const authUrl = await integrationsApi.getAuthUrl('gmail')
+      window.location.href = authUrl
     } catch {
       toast.error('Failed to connect Gmail')
     }

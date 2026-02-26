@@ -373,18 +373,11 @@ async def list_integrations(current_user: dict | None = Depends(get_optional_use
     return results
 
 
-@router.post("/integrations/{integration_id}/device-code")
-async def get_integration_device_code(integration_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
-    """Proxy to the device code request in the integrations router."""
-    from routes.integrations import request_device_code
-    return await request_device_code(integration_id, current_user)
-
-
-@router.post("/integrations/{integration_id}/poll")
-async def poll_integration(integration_id: str, session_id: str = "", current_user: Optional[dict] = Depends(get_optional_user)):
-    """Proxy to the poll endpoint in the integrations router."""
-    from routes.integrations import poll_device_code
-    return await poll_device_code(integration_id, session_id, current_user)
+@router.get("/integrations/{integration_id}/auth-url")
+async def get_integration_auth_url(integration_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
+    """Proxy to the auth-url endpoint in the integrations router."""
+    from routes.integrations import get_auth_url
+    return await get_auth_url(integration_id, current_user)
 
 
 @router.post("/integrations/{integration_id}/disconnect")

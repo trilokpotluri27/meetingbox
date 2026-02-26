@@ -1,13 +1,15 @@
 """
-Google Integrations Routes -- Device Authorization flow for Gmail and Calendar.
+Google Integrations Routes -- Standard OAuth 2.0 Authorization Code flow
+for Gmail and Google Calendar.
 
-Uses the Google Device Code flow (RFC 8628) which is ideal for LAN appliances
-since it doesn't require a public redirect URI. The user authorizes by visiting
-google.com/device and entering a short code shown on screen.
+Uses the standard redirect-based OAuth flow: user clicks Connect, is redirected
+to Google's consent screen, authorizes, and is redirected back to the app with
+an authorization code that is exchanged for tokens.
 
 Env vars required:
-  GOOGLE_CLIENT_ID      -- from Google Cloud Console (Desktop or TVs & Limited Input type)
+  GOOGLE_CLIENT_ID      -- from Google Cloud Console (Web application type)
   GOOGLE_CLIENT_SECRET  -- from Google Cloud Console
+  APP_BASE_URL          -- base URL of the web backend (e.g. http://localhost:8000)
 """
 
 import json
@@ -15,10 +17,11 @@ import logging
 import os
 import uuid
 from datetime import datetime
+from urllib.parse import urlencode
 
 import httpx
-import redis
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 
 from auth import get_current_user
 from database import get_connection
@@ -29,9 +32,9 @@ router = APIRouter()
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8000").rstrip("/")
 
-DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 
@@ -47,36 +50,6 @@ SCOPES_BY_PROVIDER = {
     ]),
 }
 
-# OAuth sessions stored in Redis with key pattern: oauth_session:{session_id}
-_OAUTH_SESSION_PREFIX = "oauth_session:"
-_redis_client = None
-
-
-def _get_redis() -> redis.Redis:
-    """Lazy Redis connection for OAuth session storage."""
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
-    return _redis_client
-
-
-def _store_session(session_id: str, data: dict, ttl_seconds: int) -> None:
-    """Store an OAuth session in Redis with automatic expiry."""
-    _get_redis().setex(f"{_OAUTH_SESSION_PREFIX}{session_id}", ttl_seconds, json.dumps(data))
-
-
-def _get_session(session_id: str) -> dict | None:
-    """Retrieve an OAuth session from Redis. Returns None if expired/missing."""
-    raw = _get_redis().get(f"{_OAUTH_SESSION_PREFIX}{session_id}")
-    if raw is None:
-        return None
-    return json.loads(raw)
-
-
-def _delete_session(session_id: str) -> None:
-    """Remove an OAuth session from Redis."""
-    _get_redis().delete(f"{_OAUTH_SESSION_PREFIX}{session_id}")
-
 
 def _check_google_configured():
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
@@ -84,6 +57,31 @@ def _check_google_configured():
             status_code=503,
             detail="Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars.",
         )
+
+
+def _get_redirect_uri(provider: str) -> str:
+    return f"{APP_BASE_URL}/api/integrations/{provider}/callback"
+
+
+def _create_state_token(user_id: str, provider: str) -> str:
+    """Create a signed JWT containing the user_id and provider for CSRF protection."""
+    from jose import jwt as jose_jwt
+    secret = os.getenv("JWT_SECRET_KEY", "meetingbox-dev-secret-change-in-production")
+    return jose_jwt.encode(
+        {"sub": user_id, "provider": provider, "nonce": uuid.uuid4().hex},
+        secret,
+        algorithm="HS256",
+    )
+
+
+def _verify_state_token(state: str) -> dict:
+    """Verify and decode the state JWT. Returns {"sub": user_id, "provider": ...}."""
+    from jose import jwt as jose_jwt, JWTError
+    secret = os.getenv("JWT_SECRET_KEY", "meetingbox-dev-secret-change-in-production")
+    try:
+        return jose_jwt.decode(state, secret, algorithms=["HS256"])
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
 
 
 def _get_integration(user_id: str, provider: str) -> dict | None:
@@ -229,171 +227,120 @@ async def list_integrations(current_user: dict = Depends(get_current_user)):
 
 
 # ======================================================================
-# DEVICE CODE FLOW: STEP 1 -- Request a device code
+# OAUTH REDIRECT FLOW: STEP 1 -- Get authorization URL
 # ======================================================================
 
-@router.post("/integrations/{provider}/device-code")
-async def request_device_code(provider: str, current_user: dict = Depends(get_current_user)):
+@router.get("/integrations/{provider}/auth-url")
+async def get_auth_url(provider: str, current_user: dict = Depends(get_current_user)):
     """
-    Start the Google Device Authorization flow.
-
-    Returns a user_code and verification_url for the user to visit on any device.
-    Also returns a session_id to poll for completion.
+    Return the Google OAuth authorization URL for the given provider.
+    The frontend should redirect the browser to this URL.
     """
     _check_google_configured()
 
     if provider not in SCOPES_BY_PROVIDER:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
 
-    scopes = SCOPES_BY_PROVIDER[provider]
+    state = _create_state_token(current_user["id"], provider)
+
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": _get_redirect_uri(provider),
+        "response_type": "code",
+        "scope": SCOPES_BY_PROVIDER[provider],
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state,
+    }
+
+    auth_url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+    return {"auth_url": auth_url}
+
+
+# ======================================================================
+# OAUTH REDIRECT FLOW: STEP 2 -- Handle callback from Google
+# ======================================================================
+
+@router.get("/integrations/{provider}/callback")
+async def oauth_callback(
+    provider: str,
+    code: str = Query(default=""),
+    state: str = Query(default=""),
+    error: str = Query(default=""),
+):
+    """
+    Google redirects the browser here after the user authorizes (or denies).
+    This endpoint exchanges the code for tokens, saves them, and redirects
+    the browser back to the Settings page.
+    """
+    frontend_base = APP_BASE_URL.replace(":8000", ":3000")
+
+    if error:
+        logger.warning("OAuth callback error for %s: %s", provider, error)
+        return RedirectResponse(
+            url=f"{frontend_base}/settings?integration=error&reason={error}",
+        )
+
+    if not code or not state:
+        return RedirectResponse(
+            url=f"{frontend_base}/settings?integration=error&reason=missing_params",
+        )
+
+    payload = _verify_state_token(state)
+    user_id = payload["sub"]
+
+    if payload.get("provider") != provider:
+        return RedirectResponse(
+            url=f"{frontend_base}/settings?integration=error&reason=provider_mismatch",
+        )
+
+    redirect_uri = _get_redirect_uri(provider)
+    scopes = SCOPES_BY_PROVIDER.get(provider, "")
 
     try:
         async with httpx.AsyncClient(timeout=15) as http:
             resp = await http.post(
-                DEVICE_CODE_URL,
+                TOKEN_URL,
                 data={
+                    "code": code,
                     "client_id": GOOGLE_CLIENT_ID,
-                    "scope": scopes,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
                 },
             )
-    except httpx.ConnectError as e:
-        logger.error("Cannot reach Google OAuth endpoint: %s", e)
-        raise HTTPException(
-            status_code=502,
-            detail="Cannot reach Google servers. Check the device's internet connection.",
-        )
-    except httpx.TimeoutException:
-        raise HTTPException(
-            status_code=504,
-            detail="Request to Google timed out. Check the device's internet connection.",
+    except Exception as e:
+        logger.error("Token exchange failed (network): %s", e)
+        return RedirectResponse(
+            url=f"{frontend_base}/settings?integration=error&reason=network_error",
         )
 
     if resp.status_code != 200:
         try:
             err_data = resp.json()
-            google_error = err_data.get("error", "")
-            google_desc = err_data.get("error_description", resp.text)
+            google_error = err_data.get("error", "unknown")
         except Exception:
-            google_error = ""
-            google_desc = resp.text
-
-        logger.error("Device code request failed: %s %s %s", resp.status_code, google_error, google_desc)
-
-        if google_error == "unauthorized_client":
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "Google rejected the client. Make sure your OAuth client type is "
-                    "'TVs and Limited Input devices' (not 'Web application') in Google Cloud Console, "
-                    "and that the Gmail API and Google Calendar API are enabled."
-                ),
-            )
-        if google_error == "invalid_client":
-            raise HTTPException(
-                status_code=502,
-                detail="Invalid Google Client ID or Secret. Check your .env file credentials.",
-            )
-
-        raise HTTPException(
-            status_code=502,
-            detail=f"Google OAuth error: {google_desc}",
-        )
-
-    data = resp.json()
-
-    session_id = str(uuid.uuid4())
-    expires_in = data.get("expires_in", 1800)
-
-    try:
-        _store_session(session_id, {
-            "user_id": current_user["id"],
-            "provider": provider,
-            "device_code": data["device_code"],
-            "interval": data.get("interval", 5),
-            "scopes": scopes,
-        }, ttl_seconds=expires_in)
-    except Exception as e:
-        logger.error("Redis session storage failed: %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail="Internal error: could not store OAuth session. Is Redis running?",
-        )
-
-    return {
-        "session_id": session_id,
-        "user_code": data["user_code"],
-        "verification_url": data["verification_url"],
-        "expires_in": expires_in,
-        "interval": data.get("interval", 5),
-    }
-
-
-# ======================================================================
-# DEVICE CODE FLOW: STEP 2 -- Poll for token
-# ======================================================================
-
-@router.post("/integrations/{provider}/poll")
-async def poll_device_code(provider: str, session_id: str = "", current_user: dict = Depends(get_current_user)):
-    """
-    Poll Google to check if the user has authorized the device code.
-
-    Returns:
-      - status: "pending" (keep polling), "complete" (tokens saved), "expired", "error"
-    """
-    session = _get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Unknown or expired session")
-
-    if session["user_id"] != current_user["id"]:
-        raise HTTPException(status_code=403, detail="Session does not belong to this user")
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            TOKEN_URL,
-            data={
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "device_code": session["device_code"],
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            },
+            google_error = "unknown"
+        logger.error("Token exchange failed: %s %s", resp.status_code, resp.text)
+        return RedirectResponse(
+            url=f"{frontend_base}/settings?integration=error&reason={google_error}",
         )
 
     token_data = resp.json()
 
-    if resp.status_code == 200 and "access_token" in token_data:
-        # Authorization complete
-        _delete_session(session_id)
-        result = _save_tokens(
-            user_id=session["user_id"],
-            provider=session["provider"],
-            token_data=token_data,
-            scopes=session["scopes"],
+    try:
+        result = _save_tokens(user_id, provider, token_data, scopes)
+        email = result.get("email", "")
+    except Exception as e:
+        logger.error("Failed to save tokens for %s: %s", provider, e)
+        return RedirectResponse(
+            url=f"{frontend_base}/settings?integration=error&reason=save_failed",
         )
-        return {
-            "status": "complete",
-            "provider": provider,
-            "email": result.get("email", ""),
-        }
 
-    error = token_data.get("error", "")
-
-    if error == "authorization_pending":
-        return {"status": "pending", "message": "Waiting for user authorization..."}
-
-    if error == "slow_down":
-        return {"status": "pending", "message": "Polling too fast, slowing down...", "interval": session["interval"] + 2}
-
-    if error == "expired_token":
-        _delete_session(session_id)
-        return {"status": "expired", "message": "Device code has expired. Please start again."}
-
-    if error == "access_denied":
-        _delete_session(session_id)
-        return {"status": "denied", "message": "Authorization was denied by the user."}
-
-    logger.error("Unexpected token poll response: %s", token_data)
-    _delete_session(session_id)
-    return {"status": "error", "message": token_data.get("error_description", "Unknown error")}
+    provider_name = "Gmail" if provider == "gmail" else "Google Calendar"
+    return RedirectResponse(
+        url=f"{frontend_base}/settings?integration=success&provider={provider_name}&email={email}",
+    )
 
 
 # ======================================================================
@@ -409,8 +356,8 @@ async def disconnect_integration(provider: str, current_user: dict = Depends(get
         raise HTTPException(status_code=404, detail=f"{provider} is not connected")
 
     try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
+        async with httpx.AsyncClient() as http:
+            await http.post(
                 REVOKE_URL,
                 params={"token": integration["access_token"]},
                 timeout=10,

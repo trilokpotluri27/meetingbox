@@ -1,10 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { settingsApi } from '../api/settings'
 import { apiClient } from '../api/client'
 import { integrationsApi } from '../api/integrations'
-import type { DeviceCodeResponse, PollResponse } from '../api/integrations'
 import type { Integration } from '../types/user'
 import toast from 'react-hot-toast'
 
@@ -40,11 +39,7 @@ export default function Onboarding() {
   const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York')
   const [isSaving, setIsSaving] = useState(false)
   const [integrationsList, setIntegrationsList] = useState<Integration[]>([])
-  const [activeSession, setActiveSession] = useState<{
-    provider: string; session_id: string; user_code: string; verification_url: string; interval: number
-  } | null>(null)
   const [connecting, setConnecting] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navigate = useNavigate()
   const setAuthFromSetup = useAuthStore((s) => s.setAuthFromSetup)
   const completeOnboarding = useAuthStore((s) => s.completeOnboarding)
@@ -62,59 +57,16 @@ export default function Onboarding() {
     if (currentStep === 5) loadIntegrations()
   }, [currentStep, loadIntegrations])
 
-  useEffect(() => {
-    return () => { if (pollRef.current) clearTimeout(pollRef.current) }
-  }, [])
-
-  const startPolling = useCallback((provider: string, sessionId: string, interval: number) => {
-    const poll = async () => {
-      try {
-        const result: PollResponse = await integrationsApi.poll(provider, sessionId)
-        if (result.status === 'complete') {
-          toast.success(`${provider === 'gmail' ? 'Gmail' : 'Google Calendar'} connected!`)
-          setActiveSession(null)
-          setConnecting(null)
-          loadIntegrations()
-          return
-        }
-        if (result.status === 'expired' || result.status === 'denied' || result.status === 'error') {
-          toast.error(result.message || 'Connection failed')
-          setActiveSession(null)
-          setConnecting(null)
-          return
-        }
-        pollRef.current = setTimeout(poll, (result.interval ?? interval) * 1000)
-      } catch {
-        setActiveSession(null)
-        setConnecting(null)
-      }
-    }
-    pollRef.current = setTimeout(poll, interval * 1000)
-  }, [loadIntegrations])
-
   const handleIntegrationConnect = async (provider: string) => {
     setConnecting(provider)
     try {
-      const data: DeviceCodeResponse = await integrationsApi.requestDeviceCode(provider)
-      setActiveSession({
-        provider,
-        session_id: data.session_id,
-        user_code: data.user_code,
-        verification_url: data.verification_url,
-        interval: data.interval,
-      })
-      startPolling(provider, data.session_id, data.interval)
+      const authUrl = await integrationsApi.getAuthUrl(provider)
+      window.location.href = authUrl
     } catch (err: any) {
       const msg = err?.response?.data?.detail || 'Connection not available'
-      toast.error(msg)
+      toast.error(msg, { duration: 8000 })
       setConnecting(null)
     }
-  }
-
-  const handleCancelConnect = () => {
-    if (pollRef.current) clearTimeout(pollRef.current)
-    setActiveSession(null)
-    setConnecting(null)
   }
 
   const handleNext = async () => {
@@ -354,42 +306,6 @@ export default function Onboarding() {
                 Connect Gmail and Calendar to enable AI-powered actions. You can skip this and set up later in Settings.
               </p>
 
-              {/* Device code authorization panel */}
-              {activeSession && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-5 mb-6">
-                  <p className="text-blue-800 mb-3 font-medium">
-                    Open this link and enter the code:
-                  </p>
-                  <div className="flex flex-col items-center space-y-3 mb-4">
-                    <a
-                      href={activeSession.verification_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 underline font-medium hover:text-blue-800"
-                    >
-                      {activeSession.verification_url}
-                    </a>
-                    <div className="bg-white border-2 border-blue-300 rounded-xl px-6 py-3 shadow-sm">
-                      <span className="font-mono text-2xl font-bold tracking-widest text-gray-900">
-                        {activeSession.user_code}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-blue-600 flex items-center">
-                      <svg className="w-4 h-4 mr-1 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      Waiting for authorization...
-                    </p>
-                    <button onClick={handleCancelConnect} className="text-sm text-gray-600 hover:text-gray-800">
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-
               <div className="space-y-4">
                 {[
                   { id: 'gmail', name: 'Gmail', desc: 'Send AI-drafted emails', bgColor: 'bg-red-100', iconColor: 'text-red-600',
@@ -426,7 +342,7 @@ export default function Onboarding() {
                             disabled={connecting !== null}
                             className="px-4 py-2 text-sm font-medium text-primary-700 bg-primary-50 rounded-lg hover:bg-primary-100 disabled:opacity-50"
                           >
-                            {connecting === item.id ? 'Starting...' : 'Connect'}
+                            {connecting === item.id ? 'Redirecting...' : 'Connect'}
                           </button>
                         )}
                       </div>

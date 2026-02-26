@@ -1,4 +1,5 @@
 import { Tab } from '@headlessui/react'
+import { useSearchParams } from 'react-router-dom'
 import GeneralSettings from '../components/settings/GeneralSettings'
 import IntegrationsSettings from '../components/settings/IntegrationsSettings'
 import PrivacySettings from '../components/settings/PrivacySettings'
@@ -10,11 +11,14 @@ const tabs = [
 ]
 
 export default function Settings() {
+  const [searchParams] = useSearchParams()
+  const defaultTab = searchParams.has('integration') ? 1 : 0
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold text-gray-900 mb-8">Settings</h1>
 
-      <Tab.Group>
+      <Tab.Group defaultIndex={defaultTab}>
         <Tab.List className="flex space-x-1 rounded-lg bg-primary-100 p-1 mb-8">
           {tabs.map((tab) => (
             <Tab

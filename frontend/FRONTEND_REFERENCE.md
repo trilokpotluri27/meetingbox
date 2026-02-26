@@ -114,9 +114,9 @@
 
 | UI Element | Handler | API Call | Backend Route | Status |
 |------------|---------|----------|---------------|--------|
-| Connect button | `handleConnect` | `POST /api/integrations/{provider}/device-code` then polls | `routes/integrations.py` | Working |
+| Connect button | `handleConnect` | `GET /api/integrations/{provider}/auth-url` then `window.location.href` redirect | `routes/integrations.py` | Working |
+| OAuth callback (auto) | Google redirects to | `GET /api/integrations/{provider}/callback` (exchanges code for tokens, redirects to `/settings?integration=success`) | `routes/integrations.py` | Working |
 | Disconnect button | `handleDisconnect` | `POST /api/integrations/{provider}/disconnect` | `routes/integrations.py` | Working |
-| Cancel connect | `handleCancel` | None (stops polling) | N/A | Working |
 
 ### Onboarding (`pages/Onboarding.tsx`)
 
@@ -125,7 +125,7 @@
 | Step 2 Continue | `handleNext` | `POST /api/auth/setup` | `routes/auth.py` | Working |
 | Step 3 Continue | `handleNext` | `PATCH /api/device/settings` | `routes/device.py` | Working |
 | Step 4 Continue | `handleNext` | `PATCH /api/device/settings` | `routes/device.py` | Working |
-| Step 5 Connect | `handleIntegrationConnect` | `POST /api/integrations/{p}/device-code` | `routes/integrations.py` | Working |
+| Step 5 Connect | `handleIntegrationConnect` | `GET /api/integrations/{p}/auth-url` then redirect | `routes/integrations.py` | Working |
 | Step 6 Finish | `handleNext` | `POST /api/auth/complete-onboarding` | `routes/auth.py` | Working |
 | Skip | `handleSkip` | `POST /api/auth/complete-onboarding` | `routes/auth.py` | Working |
 
@@ -133,7 +133,7 @@
 
 | UI Element | Handler | API Call | Backend Route | Status |
 |------------|---------|----------|---------------|--------|
-| Connect integration | `handleConnect` | `POST /api/integrations/{p}/device-code` | `routes/integrations.py` | Working |
+| Connect integration | `handleConnect` | `GET /api/integrations/{p}/auth-url` then redirect | `routes/integrations.py` | Working |
 | Skip / Finish | `handleSkip` / `handleNext` | `POST /api/auth/complete-onboarding` | `routes/auth.py` | Working |
 
 ### System Status (`pages/SystemStatus.tsx`)
@@ -181,8 +181,7 @@
 | `settings.ts` | `update` | PATCH | `/api/device/settings` | Yes | GeneralSettings, PrivacySettings |
 | `settings.ts` | `setDeviceName` | PATCH | `/api/device/settings` | Yes | Onboarding |
 | `integrations.ts` | `list` | GET | `/api/integrations` | Yes | IntegrationsSettings |
-| `integrations.ts` | `requestDeviceCode` | POST | `/api/integrations/{p}/device-code` | Yes | IntegrationsSettings, Onboarding |
-| `integrations.ts` | `poll` | POST | `/api/integrations/{p}/poll` | Yes | IntegrationsSettings, Onboarding |
+| `integrations.ts` | `getAuthUrl` | GET | `/api/integrations/{p}/auth-url` | Yes | IntegrationsSettings, Onboarding |
 | `integrations.ts` | `disconnect` | POST | `/api/integrations/{p}/disconnect` | Yes | IntegrationsSettings |
 | `authStore.ts` | `initialize` | GET | `/api/auth/me` + `/api/auth/has-users` | Yes | App.tsx |
 | `authStore.ts` | `login` | POST | `/api/auth/login` | Yes | Login |
