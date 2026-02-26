@@ -1007,30 +1007,46 @@ async def export_meeting(meeting_id: str, fmt: str, current_user: Optional[dict]
   # PDF export using fpdf2
   from fpdf import FPDF
 
-  pdf = FPDF()
-  pdf.set_auto_page_break(auto=True, margin=15)
-  pdf.add_page()
-  pdf.set_font("Helvetica", "B", 16)
-  pdf.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT")
-  pdf.set_font("Helvetica", "", 10)
-  pdf.cell(0, 6, f"Date: {start}", new_x="LMARGIN", new_y="NEXT")
-  pdf.ln(4)
+  def _pdf_safe(text: str) -> str:
+    """Replace characters outside Latin-1 so Helvetica doesn't crash."""
+    _REPLACEMENTS = {
+      "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
+      "\u2013": "-", "\u2014": "--", "\u2026": "...", "\u2022": "*",
+      "\u00a0": " ", "\u200b": "",
+    }
+    for src, dst in _REPLACEMENTS.items():
+      text = text.replace(src, dst)
+    return text.encode("latin-1", errors="replace").decode("latin-1")
 
-  if summary_text:
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "Summary", new_x="LMARGIN", new_y="NEXT")
+  try:
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, _pdf_safe(title), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 10)
-    for line in summary_text.strip().splitlines():
-      pdf.multi_cell(0, 5, line)
+    pdf.cell(0, 6, _pdf_safe(f"Date: {start}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
-  pdf.set_font("Helvetica", "B", 12)
-  pdf.cell(0, 8, "Transcript", new_x="LMARGIN", new_y="NEXT")
-  pdf.set_font("Helvetica", "", 9)
-  for line in transcript_lines:
-    pdf.multi_cell(0, 4, line)
+    if summary_text:
+      pdf.set_font("Helvetica", "B", 12)
+      pdf.cell(0, 8, "Summary", new_x="LMARGIN", new_y="NEXT")
+      pdf.set_font("Helvetica", "", 10)
+      for line in summary_text.strip().splitlines():
+        pdf.multi_cell(0, 5, _pdf_safe(line))
+      pdf.ln(4)
 
-  pdf_bytes = pdf.output()
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Transcript", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+    for line in transcript_lines:
+      pdf.multi_cell(0, 4, _pdf_safe(line))
+
+    pdf_bytes = pdf.output()
+  except Exception as exc:
+    logger.error("PDF generation failed: %s", exc)
+    raise HTTPException(status_code=500, detail=f"PDF generation failed: {exc}")
+
   return Response(
     content=bytes(pdf_bytes),
     media_type="application/pdf",
