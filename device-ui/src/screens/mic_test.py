@@ -27,9 +27,11 @@ logger = logging.getLogger(__name__)
 try:
     import sounddevice as sd
     _HAS_AUDIO = True
-except ImportError:
+except (ImportError, OSError) as e:
     _HAS_AUDIO = False
-    logger.warning("sounddevice not installed — mic test will use simulated data")
+    logger.warning(
+        "sounddevice unavailable — mic test will use simulated data: %s", e
+    )
 
 
 class _TestWaveform(Widget):

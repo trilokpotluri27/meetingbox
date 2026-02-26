@@ -5,8 +5,11 @@ Configure display, backend connection, and UI preferences.
 Based on PRD v1.0 – Apple-inspired premium dark theme.
 """
 
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # BACKEND CONNECTION
@@ -222,9 +225,12 @@ ASSETS_DIR = BASE_DIR / 'assets'
 FONTS_DIR = ASSETS_DIR / 'fonts'
 ICONS_DIR = ASSETS_DIR / 'icons'
 
-ASSETS_DIR.mkdir(exist_ok=True)
-FONTS_DIR.mkdir(exist_ok=True)
-ICONS_DIR.mkdir(exist_ok=True)
+try:
+    ASSETS_DIR.mkdir(exist_ok=True)
+    FONTS_DIR.mkdir(exist_ok=True)
+    ICONS_DIR.mkdir(exist_ok=True)
+except OSError as e:
+    logger.warning("Could not create assets/fonts/icons dirs: %s", e)
 
 # ============================================================================
 # DEVELOPMENT
