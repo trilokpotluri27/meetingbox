@@ -21,8 +21,8 @@ class TranscriptionService:
   Consume completed recordings, run Whisper.cpp on them, and persist
   structured transcript segments into SQLite.
 
-  Uses the multilingual tiny model (ggml-tiny.bin) for both final
-  transcription and live per-segment transcription during recording.
+  Uses ggml-medium.bin for final transcription (Telugu/multilingual) and
+  ggml-tiny.bin for live per-segment preview during recording.
   """
 
   def __init__(self) -> None:
@@ -31,8 +31,8 @@ class TranscriptionService:
     init_database()
 
     self.whisper_bin = "/app/whisper.cpp/build/bin/whisper-cli"
-    self.model_path = "/app/whisper.cpp/models/ggml-tiny.bin"
-    self.live_model_path = self.model_path
+    self.model_path = "/app/whisper.cpp/models/ggml-medium.bin"
+    self.live_model_path = "/app/whisper.cpp/models/ggml-tiny.bin"
 
     self._live_enabled = Path(self.live_model_path).exists()
     if self._live_enabled:

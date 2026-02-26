@@ -12,6 +12,13 @@ import os
 import sys
 from pathlib import Path
 
+# Ensure the directory containing this file (src) is on sys.path so that
+# imports of screens, components, config, api_client, etc. work regardless
+# of how the app is run (e.g. python src/main.py vs python -m src.main).
+_src_dir = Path(__file__).resolve().parent
+if str(_src_dir) not in sys.path:
+    sys.path.insert(0, str(_src_dir))
+
 from kivy.app import App
 from kivy.uix.screenmanager import (
     ScreenManager, FadeTransition, SlideTransition, NoTransition
