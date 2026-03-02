@@ -6,9 +6,10 @@
 # NOTE: profiles: [] does NOT clear the "screen" profile from the base file.
 # The --profile screen flag in the systemd ExecStart command is what activates
 # device-ui in production. This file adds device passthrough only.
+# /dev/dri is intentionally omitted for portability; some Pi images/devices
+# do not expose it, and Docker fails hard if a configured device path is missing.
 
 services:
   device-ui:
     devices:
       - /dev/input:/dev/input
-      - /dev/dri:/dev/dri
