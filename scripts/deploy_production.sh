@@ -222,19 +222,30 @@ chmod +x "$ACTUAL_HOME/.xinitrc"
 chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.xinitrc"
 
 # .bashrc — auto-start X on tty1 login (only if X is not already running)
+# Keep retrying and log failures so the device never sits at a shell prompt
+# silently if X fails once during boot.
 BASHRC="$ACTUAL_HOME/.bashrc"
-if ! grep -q "# MeetingBox: auto-start X" "$BASHRC" 2>/dev/null; then
-    cat >> "$BASHRC" << 'XSTART'
+# Remove any previous legacy block and marker-based block, then write fresh.
+sed -i '/^# MeetingBox: auto-start X on tty1 (production kiosk mode)$/,/^fi$/d' "$BASHRC" 2>/dev/null || true
+sed -i '/^# >>> MeetingBox kiosk autostart >>>$/,/^# <<< MeetingBox kiosk autostart <<</d' "$BASHRC" 2>/dev/null || true
 
+cat >> "$BASHRC" << 'XSTART'
+
+# >>> MeetingBox kiosk autostart >>>
 # MeetingBox: auto-start X on tty1 (production kiosk mode)
 if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
-    exec startx -- -nocursor 2>/dev/null
+    LOG_FILE="$HOME/meetingbox-startx.log"
+    while true; do
+        echo "$(date -Is) Starting X..." >> "$LOG_FILE"
+        startx -- -nocursor >> "$LOG_FILE" 2>&1
+        RC=$?
+        echo "$(date -Is) startx exited with code $RC, retrying in 2s" >> "$LOG_FILE"
+        sleep 2
+    done
 fi
+# <<< MeetingBox kiosk autostart <<<
 XSTART
-    echo "   Added startx trigger to .bashrc"
-else
-    echo "   startx trigger already in .bashrc"
-fi
+echo "   Installed/updated startx trigger in .bashrc"
 
 echo "   Done"
 
