@@ -198,6 +198,22 @@ Section "Screen"
 EndSection
 EOF
 
+# Ensure Xorg can open virtual consoles on Debian rootless setups.
+# Without this, X can fail with:
+#   xf86OpenConsole: Cannot open virtual console 1 (Permission denied)
+cat > /etc/X11/Xwrapper.config << 'EOF'
+allowed_users=anybody
+needs_root_rights=yes
+EOF
+chown root:root /etc/X11/Xwrapper.config
+chmod 644 /etc/X11/Xwrapper.config
+
+# Make sure the Xorg wrapper is setuid-root if present.
+if [ -f /usr/lib/xorg/Xorg.wrap ]; then
+    chown root:root /usr/lib/xorg/Xorg.wrap
+    chmod u+s /usr/lib/xorg/Xorg.wrap
+fi
+
 # .xinitrc — runs when startx is called
 cat > "$ACTUAL_HOME/.xinitrc" << 'XINITRC'
 #!/bin/sh
@@ -338,6 +354,30 @@ TimeoutStartSec=300
 WantedBy=multi-user.target
 EOF
 
+# Dedicated X server service for kiosk mode.
+# This is more reliable than shell-based startx from .bashrc/.profile.
+cat > /etc/systemd/system/meetingbox-x.service << EOF
+[Unit]
+Description=MeetingBox X server on tty1
+After=systemd-user-sessions.service plymouth-quit-wait.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=$ACTUAL_USER
+WorkingDirectory=$ACTUAL_HOME
+Environment=HOME=$ACTUAL_HOME
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/bin/xinit $ACTUAL_HOME/.xinitrc -- :0 -nocursor vt1 -keeptty
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 # Onboarding service (first-boot hotspot + setup portal)
 cp "$INSTALL_DIR/systemd/meetingbox-onboard.service" /etc/systemd/system/
 chmod +x "$INSTALL_DIR/scripts/hotspot.sh"
@@ -345,7 +385,9 @@ chmod +x "$INSTALL_DIR/scripts/onboard_server.py" 2>/dev/null || true
 
 systemctl daemon-reload
 systemctl enable meetingbox.service
+systemctl enable meetingbox-x.service
 systemctl enable meetingbox-onboard.service
+systemctl disable getty@tty1.service 2>/dev/null || true
 
 # Enable mDNS
 systemctl enable avahi-daemon
