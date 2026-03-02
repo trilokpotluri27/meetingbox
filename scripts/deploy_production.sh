@@ -1,0 +1,413 @@
+#!/bin/bash
+# ============================================================
+# MeetingBox Production Deployment
+# ============================================================
+# Prepares a Raspberry Pi for autonomous, kiosk-style operation.
+# After running this script and rebooting:
+#   - No Pi OS desktop or console is visible
+#   - All Docker services (including device-ui) start automatically
+#   - The OLED touchscreen shows the MeetingBox UI immediately
+#   - No SSH or manual commands required
+#
+# Prerequisites:
+#   - Raspberry Pi OS Bookworm (Debian 12) Lite or Desktop
+#   - A 'meetingbox' user exists (or $SUDO_USER will be used)
+#   - Internet connection for package and Docker image downloads
+#
+# Usage:
+#   cd /path/to/meetingbox-repo
+#   sudo bash scripts/deploy_production.sh
+#
+# ============================================================
+
+set -e
+
+echo "============================================"
+echo "  MeetingBox — Production Deployment"
+echo "============================================"
+echo ""
+
+# ----------------------------------------------------------
+# Sanity checks
+# ----------------------------------------------------------
+if [ "$EUID" -ne 0 ]; then
+    echo "ERROR: Please run as root (use sudo)"
+    exit 1
+fi
+
+ACTUAL_USER=${SUDO_USER:-meetingbox}
+ACTUAL_HOME=$(eval echo ~"$ACTUAL_USER")
+INSTALL_DIR="/opt/meetingbox"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+
+if [ ! -f "$REPO_DIR/docker-compose.yml" ]; then
+    echo "ERROR: Cannot find docker-compose.yml in $REPO_DIR"
+    echo "Run from the repo root: sudo bash scripts/deploy_production.sh"
+    exit 1
+fi
+
+if [ ! -f "$REPO_DIR/docker-compose.prod.yml" ]; then
+    echo "ERROR: Missing docker-compose.prod.yml (production overrides)"
+    exit 1
+fi
+
+echo "Repo:     $REPO_DIR"
+echo "Install:  $INSTALL_DIR"
+echo "User:     $ACTUAL_USER"
+echo "Home:     $ACTUAL_HOME"
+echo ""
+
+# ==========================================================
+# 1/9  System dependencies
+# ==========================================================
+echo "1/9  Installing system dependencies..."
+
+apt-get update -qq
+apt-get install -y --no-install-recommends \
+    xserver-xorg \
+    xinit \
+    x11-xserver-utils \
+    unclutter \
+    plymouth \
+    plymouth-themes \
+    curl \
+    rsync \
+    avahi-daemon \
+    avahi-utils \
+    npm
+
+# Docker
+if ! command -v docker &>/dev/null; then
+    echo "   Installing Docker..."
+    curl -fsSL https://get.docker.com | sh
+fi
+
+# Docker Compose plugin
+if ! docker compose version &>/dev/null; then
+    echo "   Installing Docker Compose plugin..."
+    apt-get install -y docker-compose-plugin 2>/dev/null || {
+        mkdir -p /usr/local/lib/docker/cli-plugins
+        ARCH=$(dpkg --print-architecture)
+        curl -fsSL \
+            "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${ARCH}" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+        chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+    }
+fi
+
+usermod -aG docker,video,input,audio "$ACTUAL_USER"
+echo "   Done"
+
+# ==========================================================
+# 2/9  Copy project to /opt/meetingbox
+# ==========================================================
+echo ""
+echo "2/9  Setting up project directory..."
+
+mkdir -p "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR/data/config"
+mkdir -p "$INSTALL_DIR/data/audio/recordings"
+mkdir -p "$INSTALL_DIR/data/transcripts"
+
+rsync -a \
+    --exclude='.git' \
+    --exclude='node_modules' \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='venv' \
+    --exclude='.venv' \
+    "$REPO_DIR/" "$INSTALL_DIR/"
+
+chown -R "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
+
+# Create .env from example if it doesn't exist
+if [ ! -f "$INSTALL_DIR/.env" ]; then
+    if [ -f "$INSTALL_DIR/.env.example" ]; then
+        cp "$INSTALL_DIR/.env.example" "$INSTALL_DIR/.env"
+        chown "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR/.env"
+        echo "   Created .env from .env.example (edit API keys before use)"
+    fi
+fi
+echo "   Done"
+
+# ==========================================================
+# 3/9  Build frontend (web dashboard)
+# ==========================================================
+echo ""
+echo "3/9  Building frontend..."
+
+if [ -f "$INSTALL_DIR/frontend/package.json" ]; then
+    cd "$INSTALL_DIR/frontend"
+    # Install Node.js 18+ if npm is too old
+    if ! command -v npx &>/dev/null; then
+        echo "   npm/npx not found, installing Node.js..."
+        curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+        apt-get install -y nodejs
+    fi
+    sudo -u "$ACTUAL_USER" npm install --no-audit --no-fund 2>&1 | tail -1
+    sudo -u "$ACTUAL_USER" npm run build 2>&1 | tail -3
+    echo "   Done"
+else
+    echo "   WARNING: frontend/package.json not found, skipping"
+fi
+
+# ==========================================================
+# 4/9  Auto-login on tty1 (no login prompt visible)
+# ==========================================================
+echo ""
+echo "4/9  Configuring auto-login on tty1..."
+
+AUTOLOGIN_DIR="/etc/systemd/system/getty@tty1.service.d"
+mkdir -p "$AUTOLOGIN_DIR"
+
+cat > "$AUTOLOGIN_DIR/autologin.conf" << EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $ACTUAL_USER --noclear %I \$TERM
+EOF
+
+systemctl daemon-reload
+echo "   Done"
+
+# ==========================================================
+# 5/9  X11 display configuration
+# ==========================================================
+echo ""
+echo "5/9  Configuring X11 display..."
+
+# Xorg monitor config
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/99-meetingbox-display.conf << 'EOF'
+Section "Monitor"
+    Identifier "OLED"
+    Option "PreferredMode" "480x320"
+EndSection
+
+Section "Screen"
+    Identifier "Default Screen"
+    Monitor "OLED"
+    DefaultDepth 24
+EndSection
+EOF
+
+# .xinitrc — runs when startx is called
+cat > "$ACTUAL_HOME/.xinitrc" << 'XINITRC'
+#!/bin/sh
+# Disable screen blanking and power management
+xset s off
+xset -dpms
+xset s noblank
+
+# Allow Docker containers to draw on this X display
+xhost +local:
+
+# Hide the mouse cursor
+unclutter -idle 0 -root &
+
+# Keep X alive (the device-ui Docker container renders to this display)
+while true; do
+    sleep 60
+done
+XINITRC
+
+chmod +x "$ACTUAL_HOME/.xinitrc"
+chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.xinitrc"
+
+# .bashrc — auto-start X on tty1 login (only if X is not already running)
+BASHRC="$ACTUAL_HOME/.bashrc"
+if ! grep -q "# MeetingBox: auto-start X" "$BASHRC" 2>/dev/null; then
+    cat >> "$BASHRC" << 'XSTART'
+
+# MeetingBox: auto-start X on tty1 (production kiosk mode)
+if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+    exec startx -- -nocursor 2>/dev/null
+fi
+XSTART
+    echo "   Added startx trigger to .bashrc"
+else
+    echo "   startx trigger already in .bashrc"
+fi
+
+echo "   Done"
+
+# ==========================================================
+# 6/9  Hide boot console (kernel quiet + Plymouth splash)
+# ==========================================================
+echo ""
+echo "6/9  Configuring silent boot..."
+
+# Kernel command line — Pi OS Bookworm uses /boot/firmware/cmdline.txt
+# Older Pi OS uses /boot/cmdline.txt
+CMDLINE=""
+for candidate in /boot/firmware/cmdline.txt /boot/cmdline.txt; do
+    if [ -f "$candidate" ]; then
+        CMDLINE="$candidate"
+        break
+    fi
+done
+
+if [ -n "$CMDLINE" ]; then
+    cp "$CMDLINE" "${CMDLINE}.bak"
+
+    # Read current line, strip existing quiet/splash/logo args, then re-add
+    CURRENT=$(cat "$CMDLINE")
+    CLEANED=$(echo "$CURRENT" | sed \
+        -e 's/ quiet//g' \
+        -e 's/ splash//g' \
+        -e 's/ loglevel=[0-9]*//g' \
+        -e 's/ logo.nologo//g' \
+        -e 's/ vt.global_cursor_default=[0-9]*//g' \
+        -e 's/ plymouth.ignore-serial-consoles//g' \
+        -e 's/ console=tty[0-9]*//g')
+
+    echo "${CLEANED} quiet splash loglevel=0 logo.nologo vt.global_cursor_default=0 plymouth.ignore-serial-consoles console=tty1" > "$CMDLINE"
+    echo "   Updated $CMDLINE"
+else
+    echo "   WARNING: Could not find cmdline.txt — skipping kernel quiet boot"
+fi
+
+# Disable the rainbow splash on Pi (shows a test pattern on HDMI at very early boot)
+BOOT_CONFIG=""
+for candidate in /boot/firmware/config.txt /boot/config.txt; do
+    if [ -f "$candidate" ]; then
+        BOOT_CONFIG="$candidate"
+        break
+    fi
+done
+
+if [ -n "$BOOT_CONFIG" ]; then
+    if ! grep -q "disable_splash" "$BOOT_CONFIG"; then
+        echo "" >> "$BOOT_CONFIG"
+        echo "# MeetingBox: disable rainbow splash" >> "$BOOT_CONFIG"
+        echo "disable_splash=1" >> "$BOOT_CONFIG"
+    fi
+    echo "   Disabled Pi rainbow splash in $BOOT_CONFIG"
+fi
+
+# Plymouth — simple black theme with text
+plymouth-set-default-theme -R tribar 2>/dev/null || \
+    plymouth-set-default-theme -R text 2>/dev/null || \
+    echo "   Plymouth theme set skipped (will fall back to black screen)"
+
+echo "   Done"
+
+# ==========================================================
+# 7/9  Systemd services
+# ==========================================================
+echo ""
+echo "7/9  Installing systemd services..."
+
+# Main service — uses production compose override
+cat > /etc/systemd/system/meetingbox.service << EOF
+[Unit]
+Description=MeetingBox (all services via Docker Compose)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=$ACTUAL_USER
+WorkingDirectory=$INSTALL_DIR
+ExecStartPre=/bin/bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Onboarding service (first-boot hotspot + setup portal)
+cp "$INSTALL_DIR/systemd/meetingbox-onboard.service" /etc/systemd/system/
+chmod +x "$INSTALL_DIR/scripts/hotspot.sh"
+chmod +x "$INSTALL_DIR/scripts/onboard_server.py" 2>/dev/null || true
+
+systemctl daemon-reload
+systemctl enable meetingbox.service
+systemctl enable meetingbox-onboard.service
+
+# Enable mDNS
+systemctl enable avahi-daemon
+systemctl start avahi-daemon 2>/dev/null || true
+
+echo "   Done"
+
+# ==========================================================
+# 8/9  Build Docker images
+# ==========================================================
+echo ""
+echo "8/9  Building Docker images (this may take several minutes)..."
+
+cd "$INSTALL_DIR"
+
+# Stop any existing containers
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down 2>/dev/null || true
+
+# Build all images including device-ui
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build
+
+echo "   Done"
+
+# ==========================================================
+# 9/9  Verify
+# ==========================================================
+echo ""
+echo "9/9  Quick verification..."
+
+# Start containers briefly to test
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+sleep 15
+
+echo ""
+if curl -sf http://localhost:8000/health | grep -q "healthy"; then
+    echo "   OK  Backend is healthy"
+else
+    echo "   --  Backend not responding yet (may still be starting)"
+fi
+
+if docker ps --format '{{.Names}}' | grep -q meetingbox-ui; then
+    echo "   OK  Device UI container is running"
+else
+    echo "   --  Device UI not running (X11 may not be active yet — will work after reboot)"
+fi
+
+if docker ps --format '{{.Names}}' | grep -q meetingbox-ollama; then
+    echo "   OK  Ollama container is running"
+else
+    echo "   --  Ollama not running"
+fi
+
+CONTAINER_COUNT=$(docker compose -f docker-compose.yml -f docker-compose.prod.yml ps -q 2>/dev/null | wc -l)
+echo "   --  $CONTAINER_COUNT containers running"
+
+# ==========================================================
+# Done
+# ==========================================================
+echo ""
+echo "============================================"
+echo "  Production deployment complete!"
+echo "============================================"
+echo ""
+echo "  Install dir:   $INSTALL_DIR"
+echo "  Web dashboard: http://meetingbox.local"
+echo ""
+echo "  What happens on boot:"
+echo "    1. Kernel boots silently (black screen)"
+echo "    2. Auto-login on tty1 as '$ACTUAL_USER'"
+echo "    3. X11 starts automatically (no desktop, just display server)"
+echo "    4. Docker Compose starts all services (including device-ui)"
+echo "    5. Device UI renders MeetingBox splash on the OLED"
+echo ""
+echo "  No SSH, no manual commands, no visible console."
+echo ""
+echo "  Reboot now to test:  sudo reboot"
+echo ""
+echo "  Troubleshooting (via SSH if needed):"
+echo "    docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f"
+echo "    docker logs meetingbox-ui"
+echo "    journalctl -u meetingbox.service"
+echo ""

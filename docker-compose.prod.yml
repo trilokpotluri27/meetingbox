@@ -1,0 +1,15 @@
+# Production overrides for MeetingBox
+#
+# Usage (systemd service applies this automatically):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this does:
+#   - Removes the "screen" profile gate so device-ui starts with all services
+#   - Passes touchscreen (/dev/input) and GPU (/dev/dri) into the container
+
+services:
+  device-ui:
+    profiles: []
+    devices:
+      - /dev/input:/dev/input
+      - /dev/dri:/dev/dri
