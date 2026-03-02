@@ -75,8 +75,7 @@ apt-get install -y --no-install-recommends \
     curl \
     rsync \
     avahi-daemon \
-    avahi-utils \
-    npm
+    avahi-utils
 
 # Docker
 if ! command -v docker &>/dev/null; then
@@ -138,15 +137,22 @@ echo "   Done"
 echo ""
 echo "3/9  Building frontend..."
 
-if [ -f "$INSTALL_DIR/frontend/package.json" ]; then
+if [ -f "$INSTALL_DIR/frontend/dist/index.html" ]; then
+    echo "   Frontend already built (frontend/dist/index.html exists), skipping"
+elif [ -f "$INSTALL_DIR/frontend/package.json" ]; then
     cd "$INSTALL_DIR/frontend"
-    # Install Node.js 18+ if npm is too old
-    if ! command -v npx &>/dev/null; then
-        echo "   npm/npx not found, installing Node.js..."
+
+    # Install Node.js 20 from nodesource if npm is not available
+    # (Do NOT use Debian's npm package -- it has broken deps on arm64/trixie)
+    if ! command -v npm &>/dev/null; then
+        echo "   Installing Node.js 20 from nodesource..."
         curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
         apt-get install -y nodejs
     fi
+
+    echo "   Running npm install..."
     sudo -u "$ACTUAL_USER" npm install --no-audit --no-fund 2>&1 | tail -1
+    echo "   Running npm run build..."
     sudo -u "$ACTUAL_USER" npm run build 2>&1 | tail -3
     echo "   Done"
 else
