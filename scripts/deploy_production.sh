@@ -96,7 +96,7 @@ if ! docker compose version &>/dev/null; then
     }
 fi
 
-usermod -aG docker,video,input,audio "$ACTUAL_USER"
+usermod -aG docker,video,input,audio,tty "$ACTUAL_USER"
 echo "   Done"
 
 # ==========================================================
