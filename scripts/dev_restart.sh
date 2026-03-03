@@ -73,6 +73,10 @@ fi
 
 # Determine setup state early so steps 4-5 can adapt
 MARKER="$PROJECT_DIR/data/config/.setup_complete"
+WIFI_CONNECTED=false
+if nmcli -t -f TYPE,STATE dev 2>/dev/null | grep -q "^wifi:connected$"; then
+    WIFI_CONNECTED=true
+fi
 
 # 3. Fresh onboarding reset
 if [ "$FRESH" = true ]; then
@@ -92,6 +96,12 @@ else
 fi
 
 # 5. Start backend services
+if [ ! -f "$MARKER" ] && [ "$FRESH" = false ] && [ "$WIFI_CONNECTED" = true ]; then
+    echo "[5/8] WiFi already connected — restoring setup marker and skipping onboarding..."
+    mkdir -p "$(dirname "$MARKER")"
+    touch "$MARKER"
+fi
+
 if [ ! -f "$MARKER" ]; then
     echo "[5/8] Starting backend services (onboarding mode — nginx skipped)..."
     docker compose up -d redis audio transcription ai ollama web

@@ -163,10 +163,13 @@ class MeetingBoxApp(App):
 
     def build(self):
         logger.info("Building MeetingBox UI")
-
-        Window.size = (DISPLAY_WIDTH, DISPLAY_HEIGHT)
         if FULLSCREEN:
+            # In fullscreen mode, let X11 provide the display size.
+            # Forcing Window.size can render the UI in the top-left corner
+            # on displays whose mode differs from DISPLAY_WIDTH/HEIGHT.
             Window.fullscreen = 'auto'
+        else:
+            Window.size = (DISPLAY_WIDTH, DISPLAY_HEIGHT)
 
         # Hide cursor on production device
         if not SHOW_FPS:
@@ -226,8 +229,11 @@ class MeetingBoxApp(App):
             return False
         # Check shared config volume (mounted at /data/config in Docker,
         # falls back to /opt/meetingbox for bare-metal installs)
-        for marker_path in ['/data/config/.setup_complete',
-                            '/opt/meetingbox/.setup_complete']:
+        for marker_path in [
+            '/data/config/.setup_complete',
+            '/opt/meetingbox/data/config/.setup_complete',
+            '/opt/meetingbox/.setup_complete',
+        ]:
             if Path(marker_path).exists():
                 return False
         return True
