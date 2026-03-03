@@ -183,20 +183,12 @@ echo "   Done"
 echo ""
 echo "5/9  Configuring X11 display..."
 
-# Xorg monitor config
+# Do not force custom Xorg Monitor/Screen config here.
+# On modern Pi OS (Bookworm/Trixie), forced Screen sections can cause:
+#   AddScreen/ScreenInit failed for driver 0
+# Let Xorg auto-detect display/driver from the running kernel/KMS stack.
 mkdir -p /etc/X11/xorg.conf.d
-cat > /etc/X11/xorg.conf.d/99-meetingbox-display.conf << 'EOF'
-Section "Monitor"
-    Identifier "OLED"
-    Option "PreferredMode" "480x320"
-EndSection
-
-Section "Screen"
-    Identifier "Default Screen"
-    Monitor "OLED"
-    DefaultDepth 24
-EndSection
-EOF
+rm -f /etc/X11/xorg.conf.d/99-meetingbox-display.conf
 
 # Ensure Xorg can open virtual consoles on Debian rootless setups.
 # Without this, X can fail with:
