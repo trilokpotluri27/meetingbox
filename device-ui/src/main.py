@@ -23,13 +23,28 @@ from kivy.app import App
 from kivy.uix.screenmanager import (
     ScreenManager, FadeTransition, SlideTransition, NoTransition
 )
-from kivy.core.window import Window
 from kivy.clock import Clock
 from kivy.config import Config
 
-# Configure Kivy before importing other modules
+# All graphics Config.set() calls must happen BEFORE 'from kivy.core.window import Window'
+# because Window is instantiated at import time in Kivy.
+# Setting position/size/fullscreen after Window exists only partially works and
+# causes the window to render at the wrong position (top-left or bottom-left).
+_FULLSCREEN = os.getenv('FULLSCREEN', '0') == '1'
+_W = int(os.getenv('DISPLAY_WIDTH', '480'))
+_H = int(os.getenv('DISPLAY_HEIGHT', '320'))
+
 Config.set('graphics', 'window_state', 'visible')
+Config.set('graphics', 'position', 'custom')
+Config.set('graphics', 'left', '0')
+Config.set('graphics', 'top', '0')
+Config.set('graphics', 'width', str(_W))
+Config.set('graphics', 'height', str(_H))
+Config.set('graphics', 'borderless', '1' if _FULLSCREEN else '0')
+Config.set('graphics', 'fullscreen', 'auto' if _FULLSCREEN else '0')
 Config.set('input', 'mouse', 'mouse,multitouch_on_demand')
+
+from kivy.core.window import Window  # noqa: E402 — must import after Config
 
 from config import (
     DISPLAY_WIDTH,
@@ -162,14 +177,12 @@ class MeetingBoxApp(App):
     # ==================================================================
 
     def build(self):
-        logger.info("Building MeetingBox UI")
-        if FULLSCREEN:
-            # In fullscreen mode, let X11 provide the display size.
-            # Forcing Window.size can render the UI in the top-left corner
-            # on displays whose mode differs from DISPLAY_WIDTH/HEIGHT.
-            Window.fullscreen = 'auto'
-        else:
-            Window.size = (DISPLAY_WIDTH, DISPLAY_HEIGHT)
+        logger.info("Building MeetingBox UI (fullscreen=%s, size=%sx%s)",
+                    FULLSCREEN, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+
+        # Window geometry and fullscreen are already set via Config.set() at
+        # module load time (before Window was imported), so no runtime
+        # Window.size / Window.fullscreen calls needed here.
 
         # Hide cursor on production device
         if not SHOW_FPS:
