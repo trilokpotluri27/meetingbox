@@ -154,7 +154,6 @@ class MeetingBoxApp(App):
             'paused': False,
             'elapsed': 0,
             'speaker_count': 0,
-            'live_caption': '',
         }
         self.privacy_mode = DEFAULT_PRIVACY_MODE
         self.device_name = 'MeetingBox'
@@ -391,7 +390,6 @@ class MeetingBoxApp(App):
                     'recording_stopped': self.on_recording_stopped,
                     'recording_paused': self.on_recording_paused,
                     'recording_resumed': self.on_recording_resumed,
-                    'transcription_update': self.on_transcription_update,
                     'transcription_complete': self.on_transcription_complete,
                     'audio_segment': self.on_audio_segment,
                     'processing_started': self.on_processing_started,
@@ -438,15 +436,6 @@ class MeetingBoxApp(App):
         screen = self.screen_manager.get_screen('recording')
         if hasattr(screen, 'on_resumed'):
             Clock.schedule_once(lambda _: screen.on_resumed(), 0)
-
-    def on_transcription_update(self, data):
-        text = data.get('text', '')
-        speaker = data.get('speaker_id')
-        self.recording_state['live_caption'] = text
-        screen = self.screen_manager.get_screen('recording')
-        if hasattr(screen, 'on_transcription_update'):
-            Clock.schedule_once(
-                lambda _: screen.on_transcription_update(text, speaker), 0)
 
     def on_audio_segment(self, data):
         seg_data = data if 'segment_num' in data else data.get('data', {})

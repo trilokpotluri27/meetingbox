@@ -95,7 +95,6 @@ class RecordingScreen(BaseScreen):
         self.elapsed_seconds = 0
         self.timer_event = None
         self.waveform_event = None
-        self.transcript_lines = []
         self._is_paused = False
         self._build_ui()
 
@@ -192,9 +191,7 @@ class RecordingScreen(BaseScreen):
     # ------------------------------------------------------------------
     def on_enter(self):
         self._is_paused = False
-        self._has_live_text = False
         self.elapsed_seconds = 0
-        self.transcript_lines = []
         self.caption_label.text = 'Listening…'
         self.timer_label.text = '00:00'
         self.waveform.set_active(True)
@@ -275,23 +272,10 @@ class RecordingScreen(BaseScreen):
         self.app.stop_recording()
 
     # ------------------------------------------------------------------
-    # Transcription updates
+    # Audio segment counter (shown while recording, no live transcription)
     # ------------------------------------------------------------------
-    def on_transcription_update(self, text: str, speaker_id: str = None):
-        if self._is_paused:
-            return
-        self._has_live_text = True
-        if speaker_id:
-            line = f'S{speaker_id}: {text}'
-        else:
-            line = text
-        self.transcript_lines.append(line)
-        if len(self.transcript_lines) > 2:
-            self.transcript_lines = self.transcript_lines[-2:]
-        self.caption_label.text = '\n'.join(self.transcript_lines)
-
     def on_audio_segment(self, segment_num: int):
-        if self._is_paused or getattr(self, '_has_live_text', False):
+        if self._is_paused:
             return
         count = segment_num + 1
         self.caption_label.text = f'Listening… ({count} segment{"s" if count != 1 else ""} captured)'
