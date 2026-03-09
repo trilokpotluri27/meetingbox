@@ -52,9 +52,13 @@ services:
     restart: unless-stopped
     depends_on:
       - redis
+      - ollama
     environment:
       - PYTHONUNBUFFERED=1
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OLLAMA_HOST=http://ollama:11434
+      - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-phi3:mini}
+      - USE_LOCAL_LLM=${USE_LOCAL_LLM:-true}
     volumes:
       - ./data/transcripts:/data/transcripts
     networks:

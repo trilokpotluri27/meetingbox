@@ -535,11 +535,7 @@ class MeetingBoxApp(App):
         """After transcription completes, auto-trigger summarization then show review screen."""
         async def _run():
             try:
-                privacy = getattr(self, 'privacy_mode', False)
-                if privacy:
-                    summary = await self.backend.summarize_meeting_local(meeting_id)
-                else:
-                    summary = await self.backend.summarize_meeting(meeting_id)
+                summary = await self.backend.summarize_meeting_local(meeting_id)
 
                 def _show(_dt):
                     screen = self.screen_manager.get_screen('summary_review')
