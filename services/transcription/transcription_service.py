@@ -191,9 +191,64 @@ class TranscriptionService:
 
     return text if text else None
 
+  def _ensure_meeting_record_minimal(self, meeting_id: str) -> None:
+    """Create a meeting row if it doesn't exist yet (called before first live segment)."""
+    conn = get_connection()
+    try:
+      cur = conn.cursor()
+      cur.execute(
+        """
+        INSERT OR IGNORE INTO meetings
+          (id, title, start_time, audio_path, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+          meeting_id,
+          f"Meeting {meeting_id}",
+          datetime.now().isoformat(),
+          "",
+          "recording",
+          datetime.now().isoformat(),
+        ),
+      )
+      conn.commit()
+    finally:
+      conn.close()
+
+  def _save_live_segment(self, meeting_id: str, segment_num: int, text: str) -> None:
+    """Persist a live tiny-model segment to the DB so it can be used for summarization."""
+    # Estimate timestamps from segment number (each segment ≈ 30s).
+    start_sec = float((segment_num - 1) * 30)
+    end_sec = float(segment_num * 30)
+    conn = get_connection()
+    try:
+      cur = conn.cursor()
+      cur.execute(
+        """
+        INSERT OR REPLACE INTO segments
+          (meeting_id, segment_num, start_time, end_time, text)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (meeting_id, segment_num, start_sec, end_sec, text),
+      )
+      conn.commit()
+    finally:
+      conn.close()
+
+  def _count_live_segments(self, meeting_id: str) -> int:
+    conn = get_connection()
+    try:
+      cur = conn.cursor()
+      cur.execute("SELECT COUNT(*) FROM segments WHERE meeting_id = ?", (meeting_id,))
+      row = cur.fetchone()
+      return row[0] if row else 0
+    finally:
+      conn.close()
+
   def _live_segment_listener(self) -> None:
-    """Background thread: subscribe to audio_segments and transcribe each one live."""
-    logger.info("Live transcription listener started")
+    """Background thread: subscribe to audio_segments, transcribe each one with the
+    tiny model, and save the result to the DB so the medium re-pass can be skipped."""
+    logger.info("Live transcription listener started (segments will be saved to DB)")
     client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
     pubsub = client.pubsub()
     pubsub.subscribe("audio_segments")
@@ -208,19 +263,24 @@ class TranscriptionService:
 
       audio_path = segment.get("path")
       session_id = segment.get("session_id")
-      if not audio_path:
+      segment_num = segment.get("segment_num", 1)
+      if not audio_path or not session_id:
         continue
+
+      # Ensure the meeting row exists before inserting segments (FK).
+      self._ensure_meeting_record_minimal(session_id)
 
       text = self._live_transcribe_segment(audio_path)
       if text:
-        logger.info("Live: segment %s -> %s", segment.get("segment_num"), text[:80])
+        logger.info("Live: segment %s saved -> %s", segment_num, text[:80])
+        self._save_live_segment(session_id, segment_num, text)
         client.publish(
           "events",
           json.dumps({
             "type": "transcription_update",
             "text": text,
             "session_id": session_id,
-            "segment_num": segment.get("segment_num"),
+            "segment_num": segment_num,
             "timestamp": datetime.now().isoformat(),
           }),
         )
@@ -317,15 +377,29 @@ class TranscriptionService:
         set_recording_idle()
         continue
 
-      logger.info("Starting transcription for %s", meeting_id)
+      # Update the meeting row with the final audio path regardless of which path we take.
       self._ensure_meeting_record(meeting_id, audio_path)
-      transcription = self.transcribe_with_whisper(audio_path)
-      if not transcription:
-        self._set_meeting_status(meeting_id, "transcription_failed")
-        set_recording_idle()
-        continue
 
-      self._save_transcription(meeting_id, transcription)
+      live_count = self._count_live_segments(meeting_id)
+
+      if live_count > 0:
+        # Fast path: live tiny-model segments were already saved during recording.
+        # Skip the slow medium Whisper re-pass and go straight to summarization.
+        logger.info(
+          "Skipping medium Whisper pass for %s — %d live segments already in DB",
+          meeting_id, live_count,
+        )
+        self._set_meeting_status(meeting_id, "transcribed")
+      else:
+        # Fallback: no live segments available (tiny model missing or all failed).
+        # Run the full medium model pass as before.
+        logger.info("No live segments found for %s — running medium Whisper pass", meeting_id)
+        transcription = self.transcribe_with_whisper(audio_path)
+        if not transcription:
+          self._set_meeting_status(meeting_id, "transcription_failed")
+          set_recording_idle()
+          continue
+        self._save_transcription(meeting_id, transcription)
 
       self.redis_client.publish(
         "events",
