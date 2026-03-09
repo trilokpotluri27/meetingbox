@@ -8,7 +8,7 @@ This repository contains the core software stack for **MeetingBox**, a conferenc
 - Generates AI summaries with Claude
 - Serves a local web dashboard at `meetingbox.local`
 
-This MVP focuses on a **single-device pipeline** (no external calendar/email/Slack integrations yet):
+This MVP focuses on a **single-device pipeline**, with optional Gmail/Google Calendar integrations for action delivery:
 
 1. Start/stop a meeting recording
 2. Capture audio from a USB mic array
@@ -82,4 +82,5 @@ docker compose up --build -d
 ```
 
 > **Note:** The `docker-compose.yml` includes `devices: ["/dev/snd"]` and `group_add: [audio]` on the audio service for Linux mic access. Comment these out if running on Windows Docker Desktop.
+
 

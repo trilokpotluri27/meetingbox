@@ -17,13 +17,13 @@ import logging
 import os
 import uuid
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote_plus
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
-from auth import get_current_user
+from auth import get_current_user, SECRET_KEY
 from database import get_connection
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ router = APIRouter()
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8000").rstrip("/")
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", APP_BASE_URL).rstrip("/")
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -66,7 +67,7 @@ def _get_redirect_uri(provider: str) -> str:
 def _create_state_token(user_id: str, provider: str) -> str:
     """Create a signed JWT containing the user_id and provider for CSRF protection."""
     from jose import jwt as jose_jwt
-    secret = os.getenv("JWT_SECRET_KEY", "meetingbox-dev-secret-change-in-production")
+    secret = SECRET_KEY
     return jose_jwt.encode(
         {"sub": user_id, "provider": provider, "nonce": uuid.uuid4().hex},
         secret,
@@ -77,7 +78,7 @@ def _create_state_token(user_id: str, provider: str) -> str:
 def _verify_state_token(state: str) -> dict:
     """Verify and decode the state JWT. Returns {"sub": user_id, "provider": ...}."""
     from jose import jwt as jose_jwt, JWTError
-    secret = os.getenv("JWT_SECRET_KEY", "meetingbox-dev-secret-change-in-production")
+    secret = SECRET_KEY
     try:
         return jose_jwt.decode(state, secret, algorithms=["HS256"])
     except JWTError:
@@ -273,7 +274,7 @@ async def oauth_callback(
     This endpoint exchanges the code for tokens, saves them, and redirects
     the browser back to the Settings page.
     """
-    frontend_base = APP_BASE_URL.replace(":8000", ":3000")
+    frontend_base = FRONTEND_BASE_URL
 
     if error:
         logger.warning("OAuth callback error for %s: %s", provider, error)
@@ -339,7 +340,7 @@ async def oauth_callback(
 
     provider_name = "Gmail" if provider == "gmail" else "Google Calendar"
     return RedirectResponse(
-        url=f"{frontend_base}/settings?integration=success&provider={provider_name}&email={email}",
+        url=f"{frontend_base}/settings?integration=success&provider={quote_plus(provider_name)}&email={quote_plus(email)}",
     )
 
 
@@ -374,3 +375,6 @@ async def disconnect_integration(provider: str, current_user: dict = Depends(get
 
     logger.info("Disconnected %s for user %s", provider, user_id)
     return {"status": "disconnected", "provider": provider}
+
+
+

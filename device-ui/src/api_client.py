@@ -315,7 +315,8 @@ class BackendClient:
             resp = await self.client.get(
                 f"{self.base_url}/api/device/integrations/{integration_id}/auth-url")
             resp.raise_for_status()
-            return resp.json()['url']
+            data = resp.json()
+            return data.get('auth_url') or data.get('url') or ''
         except Exception as e:
             logger.error(f"Failed to get auth URL for {integration_id}: {e}")
             raise
@@ -490,3 +491,4 @@ class BackendClient:
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return False
+

@@ -45,11 +45,18 @@ export default function LiveRecording() {
     try {
       const data = JSON.parse(lastMessage.data)
 
-      if (data.type === 'audio_segment') {
+      if (data.type === 'transcription_update' && typeof data.text === 'string') {
         setLiveCaption(data.text)
         setTranscript((prev) => [...prev, data.text])
       }
-      if (data.type === 'speaker_detected') {
+
+      // Raw audio segment events are relayed without a `type` key.
+      if (data.type === 'audio_segment' || typeof data.segment_num === 'number') {
+        const segNum = typeof data.segment_num === 'number' ? data.segment_num : 0
+        setSpeakerCount((prev) => Math.max(prev, segNum + 1))
+      }
+
+      if (data.type === 'speaker_detected' && typeof data.count === 'number') {
         setSpeakerCount(data.count)
       }
       if (data.type === 'recording_stopped') {
@@ -134,3 +141,4 @@ export default function LiveRecording() {
     </div>
   )
 }
+

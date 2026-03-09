@@ -83,7 +83,7 @@ def extract_actions_from_summary(meeting_id: str, action_items: list) -> list[di
             if isinstance(item, str):
                 continue
             elif isinstance(item, dict):
-                title = item.get("task") or item.get("title") or str(item)
+                title = (item.get("task") or item.get("title") or "").strip()
                 assignee = item.get("assignee")
                 raw_type = item.get("type", "task")
                 action_type = _normalize_action_type(raw_type)
@@ -91,7 +91,23 @@ def extract_actions_from_summary(meeting_id: str, action_items: list) -> list[di
             else:
                 continue
 
-            if action_type not in _INTEGRATION_TYPES:
+            if action_type not in _INTEGRATION_TYPES or not title:
+                continue
+
+            # Avoid duplicates when users run summarize/local-summarize multiple times.
+            cur.execute(
+                """
+                SELECT 1
+                FROM actions
+                WHERE meeting_id = ?
+                  AND type = ?
+                  AND lower(trim(title)) = lower(trim(?))
+                  AND status IN ('pending', 'approved', 'draft_ready', 'executed')
+                LIMIT 1
+                """,
+                (meeting_id, action_type, title),
+            )
+            if cur.fetchone():
                 continue
 
             action_id = str(uuid.uuid4())
@@ -232,7 +248,7 @@ def _get_meeting_context(meeting_id: str) -> str:
         cur = conn.cursor()
         cur.execute("SELECT title, start_time FROM meetings WHERE id = ?", (meeting_id,))
         meeting = cur.fetchone()
-        cur.execute("SELECT summary, discussion_points, decisions, action_items FROM summaries WHERE meeting_id = ?", (meeting_id,))
+        cur.execute("SELECT summary, decisions, action_items FROM summaries WHERE meeting_id = ?", (meeting_id,))
         summary = cur.fetchone()
     finally:
         conn.close()
@@ -245,7 +261,7 @@ def _get_meeting_context(meeting_id: str) -> str:
     if summary:
         if summary.get("summary"):
             parts.append(f"Summary: {summary['summary']}")
-        for field in ("discussion_points", "decisions", "action_items"):
+        for field in ("decisions", "action_items"):
             raw = summary.get(field)
             if raw:
                 items = json.loads(raw) if isinstance(raw, str) else raw
@@ -483,7 +499,7 @@ async def deliver_action(action_id: str, current_user: Optional[dict] = Depends(
     execution_result["delivery_status"] = delivery_status
 
     failed_statuses = {"gmail_send_failed", "calendar_create_failed"}
-    not_connected = {"gmail_not_connected", "calendar_not_connected"}
+    not_connected = {"gmail_not_connected", "calendar_not_connected", "draft_only"}
     if delivery_status in failed_statuses:
         action_status = "delivery_failed"
     elif delivery_status in not_connected:
@@ -509,3 +525,4 @@ async def deliver_action(action_id: str, current_user: Optional[dict] = Depends(
         "delivery_status": delivery_status,
         "result": execution_result,
     }
+

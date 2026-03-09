@@ -82,7 +82,7 @@ export const meetingsApi = {
   },
 
   // Export meeting to file
-  export: async (id: string, format: 'pdf' | 'docx' | 'txt'): Promise<Blob> => {
+  export: async (id: string, format: 'pdf' | 'txt'): Promise<Blob> => {
     const response = await client.get(`/api/meetings/${id}/export/${format}`, {
       responseType: 'blob',
     })
@@ -100,3 +100,4 @@ export const meetingsApi = {
     return response.data
   },
 }
+

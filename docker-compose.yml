@@ -94,10 +94,11 @@ services:
       - AI_MODEL=${AI_MODEL:-claude-sonnet-4-20250514}
       - OLLAMA_HOST=http://ollama:11434
       - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-phi3:mini}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-meetingbox-dev-secret-change-in-production}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - APP_BASE_URL=${APP_BASE_URL:-http://localhost:8000}
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-}
     volumes:
       - ./data/transcripts:/data/transcripts
       - ./data/audio:/data/audio
@@ -177,3 +178,4 @@ volumes:
 networks:
   meetingbox-net:
     driver: bridge
+

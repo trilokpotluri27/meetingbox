@@ -68,7 +68,7 @@ export default function MeetingDetailPage() {
     loadMeetingData()
   }, [loadMeetingData])
 
-  const handleExport = async (fmt: 'pdf' | 'docx' | 'txt') => {
+  const handleExport = async (fmt: 'pdf' | 'txt') => {
     if (!id) return
     try {
       const blob = await meetingsApi.export(id, fmt)
@@ -460,3 +460,4 @@ export default function MeetingDetailPage() {
     </div>
   )
 }
+

@@ -2,7 +2,9 @@
 Authentication utilities -- JWT tokens and password hashing.
 """
 
+import logging
 import os
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -13,7 +15,32 @@ from passlib.context import CryptContext
 
 from database import get_connection
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "meetingbox-dev-secret-change-in-production")
+logger = logging.getLogger(__name__)
+_WEAK_DEFAULT_SECRET = "meetingbox-dev-secret-change-in-production"
+
+
+def _load_secret_key() -> str:
+    configured = os.getenv("JWT_SECRET_KEY", "").strip()
+    if configured and configured != _WEAK_DEFAULT_SECRET:
+        return configured
+
+    # Never use a known static secret. Fall back to an ephemeral secret so
+    # deployments without JWT_SECRET_KEY fail safe instead of being forgeable.
+    ephemeral = secrets.token_urlsafe(48)
+    if configured == _WEAK_DEFAULT_SECRET:
+        logger.warning(
+            "Weak JWT_SECRET_KEY value detected and ignored. "
+            "Set a strong JWT_SECRET_KEY in the environment."
+        )
+    else:
+        logger.warning(
+            "JWT_SECRET_KEY is not set. Using an ephemeral in-memory key; "
+            "existing tokens will be invalid after restart."
+        )
+    return ephemeral
+
+
+SECRET_KEY = _load_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "720"))  # 30 days default
 

@@ -376,6 +376,8 @@ async def list_integrations(current_user: dict | None = Depends(get_optional_use
 @router.get("/integrations/{integration_id}/auth-url")
 async def get_integration_auth_url(integration_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
     """Proxy to the auth-url endpoint in the integrations router."""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required to connect integrations")
     from routes.integrations import get_auth_url
     return await get_auth_url(integration_id, current_user)
 
@@ -383,5 +385,9 @@ async def get_integration_auth_url(integration_id: str, current_user: Optional[d
 @router.post("/integrations/{integration_id}/disconnect")
 async def disconnect_integration(integration_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
     """Proxy to the real disconnect in the integrations router."""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required to disconnect integrations")
     from routes.integrations import disconnect_integration as real_disconnect
     return await real_disconnect(integration_id, current_user)
+
+
