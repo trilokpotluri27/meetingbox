@@ -6,7 +6,7 @@ export interface Meeting {
   start_time: string
   end_time: string | null
   duration: number | null // in seconds
-  status: 'recording' | 'transcribing' | 'completed'
+  status: 'recording' | 'transcribing' | 'summarizing' | 'finalizing' | 'completed' | 'transcription_failed'
   audio_path: string | null
   created_at: string
   pending_actions?: number

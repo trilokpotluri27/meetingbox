@@ -412,13 +412,6 @@ class AudioCaptureService:
         with wave.open(str(seg), "rb") as src:
           out_wav.writeframes(src.readframes(src.getnframes()))
 
-    for seg in segment_files:
-      seg.unlink()
-    try:
-      session_dir.rmdir()
-    except OSError:
-      pass
-
     logger.info("Combined %d segments -> %s", len(segment_files), output_path)
     return output_path
 

@@ -108,7 +108,7 @@ export default function MeetingDetailPage() {
     try {
       await meetingsApi.summarizeLocal(id)
       await loadMeetingData()
-      toast.success('Local summary generated!')
+      toast.success('Local summary requested. It will appear when processing finishes.')
     } catch {
       toast.error('Local summarization failed. Is Ollama running?')
     } finally {
@@ -297,7 +297,7 @@ export default function MeetingDetailPage() {
               disabled={summarizingLocal}
               className="px-4 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50"
             >
-              {summarizingLocal ? 'Summarizing...' : 'Summarize Locally'}
+              {summarizingLocal ? 'Requesting...' : 'Request Local Summary'}
             </button>
           )}
         </div>

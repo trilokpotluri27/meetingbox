@@ -587,7 +587,7 @@ async def summarize_meeting(meeting_id: str, current_user: Optional[dict] = Depe
 
 @router.post("/{meeting_id}/summarize-local")
 async def summarize_meeting_local(meeting_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
-  """Generate a summary using the local Ollama LLM (no API key needed)."""
+  """Queue a backend-owned local summary generation request."""
   conn = get_connection()
   conn.execute("PRAGMA foreign_keys = ON")
   conn.row_factory = lambda cursor, row: {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
@@ -604,170 +604,40 @@ async def summarize_meeting_local(meeting_id: str, current_user: Optional[dict] 
     if existing:
       result = _normalize_summary_data({
         "summary": existing["summary"],
+        "discussion_points": json.loads(existing.get("discussion_points") or "[]"),
         "action_items": json.loads(existing["action_items"] or "[]"),
         "decisions": json.loads(existing["decisions"] or "[]"),
         "topics": json.loads(existing["topics"] or "[]"),
         "sentiment": existing["sentiment"],
       })
-      result["status"] = "already_exists"
+      result["status"] = "already_exists" if int(existing.get("is_final", 0) or 0) else "in_progress"
       result["model_name"] = existing.get("model_name", LOCAL_LLM_MODEL)
       return result
 
     cur.execute(
-      "SELECT segment_num, start_time, text FROM segments WHERE meeting_id = ? ORDER BY segment_num",
-      (meeting_id,),
-    )
-    rows = cur.fetchall()
-  finally:
-    conn.close()
-
-  if not rows:
-    raise HTTPException(status_code=400, detail="No transcript segments found for this meeting.")
-
-  # Build transcript text
-  parts = []
-  for r in rows:
-    mins = int((r["start_time"] or 0) // 60)
-    secs = int((r["start_time"] or 0) % 60)
-    parts.append(f"[{mins:02d}:{secs:02d}] Segment {r['segment_num']}: {r['text']}")
-  transcript = "\n\n".join(parts)
-
-  prompt = (
-    "You are analyzing a meeting transcript. Please provide:\n\n"
-    "1. Summary (2-3 sentences)\n"
-    "2. Key discussion points (3-5 bullets)\n"
-    "3. Decisions made\n"
-    "4. Action items with assignees if available. Each action item MUST include a "
-    '"type" field with one of these values:\n'
-    '   - "email_draft" — for items that require sending an email (e.g. sharing MOM, follow-up emails)\n'
-    '   - "calendar_invite" — for items that require scheduling a meeting or blocking calendar time\n'
-    '   - "task" — for general to-do items that don\'t involve email or calendar\n'
-    '   IMPORTANT: You MUST always include this action item:\n'
-    '   {"task": "Send MOM of this meeting to all stakeholders", "assignee": null, '
-    '"due_date": null, "type": "email_draft"}\n'
-    "5. 3-5 topic hashtags\n"
-    "6. Overall sentiment (single word or short phrase)\n\n"
-    "Return **only** valid JSON with no additional text, in this exact shape:\n"
-    '{\n'
-    '  "summary": "...",\n'
-    '  "discussion_points": ["...", "..."],\n'
-    '  "decisions": ["...", "..."],\n'
-    '  "action_items": [{"task": "...", "assignee": "...", "due_date": "...", "type": "email_draft | calendar_invite | task"}],\n'
-    '  "topics": ["#topic1", "#topic2"],\n'
-    '  "sentiment": "Productive"\n'
-    "}\n\n"
-    f"Transcript:\n\n{transcript}"
-  )
-
-  # Call Ollama API
-  try:
-    # First, check if Ollama is reachable and model is available
-    resp = httpx.post(
-      f"{OLLAMA_HOST}/api/generate",
-      json={
-        "model": LOCAL_LLM_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-          "temperature": 0.3,
-          "num_predict": 2000,
-        },
-      },
-      timeout=300.0,  # Local inference can take a while
-    )
-    resp.raise_for_status()
-    result = resp.json()
-    text = result.get("response", "")
-  except httpx.ConnectError:
-    raise HTTPException(
-      status_code=503,
-      detail=(
-        f"Cannot connect to Ollama at {OLLAMA_HOST}. "
-        "Make sure the ollama container is running: docker compose ps"
-      ),
-    )
-  except httpx.HTTPStatusError as exc:
-    error_body = exc.response.text
-    if "not found" in error_body.lower():
-      raise HTTPException(
-        status_code=503,
-        detail=(
-          f"Model '{LOCAL_LLM_MODEL}' not found in Ollama. "
-          f"Pull it first: docker compose exec ollama ollama pull {LOCAL_LLM_MODEL}"
-        ),
-      )
-    raise HTTPException(status_code=500, detail=f"Ollama error: {error_body}")
-  except Exception as exc:
-    raise HTTPException(status_code=500, detail=f"Local LLM error: {exc}")
-
-  # Parse JSON from response
-  if "```json" in text:
-    start = text.find("```json") + len("```json")
-    end = text.find("```", start)
-    json_str = text[start:end].strip()
-  elif "```" in text:
-    start = text.find("```") + len("```")
-    end = text.find("```", start)
-    json_str = text[start:end].strip()
-  else:
-    # Try to find JSON object in the response
-    json_start = text.find("{")
-    json_end = text.rfind("}") + 1
-    if json_start >= 0 and json_end > json_start:
-      json_str = text[json_start:json_end].strip()
-    else:
-      json_str = text.strip()
-
-  try:
-    data = json.loads(json_str)
-  except json.JSONDecodeError:
-    raise HTTPException(
-      status_code=500,
-      detail=f"Failed to parse JSON from local LLM response. Raw output: {text[:500]}",
-    )
-
-  # Normalize LLM output (decisions/topics may be objects instead of strings)
-  data = _normalize_summary_data(data)
-
-  conn = get_connection()
-  conn.execute("PRAGMA foreign_keys = ON")
-  try:
-    cur = conn.cursor()
-    cur.execute(
       """
-      INSERT OR REPLACE INTO local_summaries
-        (meeting_id, summary, action_items, decisions, topics, sentiment, model_name, generated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO processing_state
+        (meeting_id, updated_at)
+      VALUES (?, ?)
       """,
-      (
-        meeting_id,
-        data.get("summary", ""),
-        json.dumps(data.get("action_items", [])),
-        json.dumps(data.get("decisions", [])),
-        json.dumps(data.get("topics", [])),
-        data.get("sentiment", ""),
-        LOCAL_LLM_MODEL,
-        datetime.now().isoformat(),
-      ),
+      (meeting_id, datetime.now().isoformat()),
     )
-    auto_title = _derive_title(data.get("summary", ""), data.get("topics", []))
-    if auto_title and (meeting.get("title", "").startswith("Meeting ") or not meeting.get("title")):
-      cur.execute("UPDATE meetings SET title = ? WHERE id = ?", (auto_title, meeting_id))
+    cur.execute("UPDATE meetings SET status = 'summarizing' WHERE id = ?", (meeting_id,))
     conn.commit()
   finally:
     conn.close()
 
-  extract_actions_from_summary(meeting_id, data.get("action_items", []))
-
-  return {
-    "status": "generated",
-    "summary": data.get("summary", ""),
-    "action_items": data.get("action_items", []),
-    "decisions": data.get("decisions", []),
-    "topics": data.get("topics", []),
-    "sentiment": data.get("sentiment", ""),
-    "model_name": LOCAL_LLM_MODEL,
-  }
+  _get_redis().publish(
+    "events",
+    json.dumps(
+      {
+        "type": "summary_requested",
+        "meeting_id": meeting_id,
+        "timestamp": datetime.now().isoformat(),
+      }
+    ),
+  )
+  return {"status": "queued", "meeting_id": meeting_id}
 
 
 class EmailRequest(BaseModel):

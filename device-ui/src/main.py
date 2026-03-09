@@ -395,6 +395,7 @@ class MeetingBoxApp(App):
                     'processing_started': self.on_processing_started,
                     'processing_progress': self.on_processing_progress,
                     'processing_complete': self.on_processing_complete,
+                    'summary_progress': self.on_summary_progress,
                     'summary_complete': self.on_summary_complete,
                     'setup_complete': self.on_setup_complete,
                     'update_progress': self.on_update_progress,
@@ -472,8 +473,14 @@ class MeetingBoxApp(App):
                 screen.on_progress_update(80, 'Transcription done. Generating summary…')
 
         Clock.schedule_once(_update_status, 0)
-        if meeting_id:
-            self._auto_summarize(meeting_id)
+
+    def on_summary_progress(self, data):
+        def _update_status(_dt):
+            screen = self.screen_manager.get_screen('processing')
+            if hasattr(screen, 'on_progress_update'):
+                screen.on_progress_update(90, 'Updating local summary…')
+
+        Clock.schedule_once(_update_status, 0)
 
     def on_processing_complete(self, data):
         meeting_id = data.get('meeting_id')

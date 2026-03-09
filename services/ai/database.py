@@ -66,16 +66,46 @@ def init_database() -> None:
         CREATE TABLE IF NOT EXISTS local_summaries (
           meeting_id TEXT PRIMARY KEY,
           summary TEXT,
+          discussion_points TEXT,
           action_items TEXT,
           decisions TEXT,
           topics TEXT,
           sentiment TEXT,
           model_name TEXT,
+          last_segment_num INTEGER DEFAULT -1,
+          is_final INTEGER DEFAULT 0,
           generated_at TEXT,
           FOREIGN KEY (meeting_id) REFERENCES meetings(id)
         )
         """
     )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS processing_state (
+          meeting_id TEXT PRIMARY KEY,
+          last_enqueued_segment INTEGER DEFAULT -1,
+          last_transcribed_segment INTEGER DEFAULT -1,
+          last_summarized_segment INTEGER DEFAULT -1,
+          recording_stopped INTEGER DEFAULT 0,
+          updated_at TEXT,
+          FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+        )
+        """
+    )
+
+    try:
+        cursor.execute("ALTER TABLE local_summaries ADD COLUMN discussion_points TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE local_summaries ADD COLUMN last_segment_num INTEGER DEFAULT -1")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE local_summaries ADD COLUMN is_final INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     cursor.execute(
         """
@@ -134,6 +164,7 @@ def init_database() -> None:
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_integrations_user_provider ON integrations(user_id, provider)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_segments_meeting_id ON segments(meeting_id)")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_segments_meeting_segment_num ON segments(meeting_id, segment_num)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_meetings_status ON meetings(status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_meetings_created_at ON meetings(created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_actions_meeting_id ON actions(meeting_id)")
