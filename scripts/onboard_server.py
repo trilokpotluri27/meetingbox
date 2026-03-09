@@ -386,7 +386,8 @@ class OnboardHandler(http.server.BaseHTTPRequestHandler):
                      "autoconnect", "yes",
                      "--",
                      "wifi-sec.key-mgmt", "wpa-psk",
-                     "wifi-sec.psk", password],
+                     "wifi-sec.psk", password,
+                     "wifi-sec.psk-flags", "0"],  # store PSK in profile file, not keyring
                     capture_output=True, text=True, timeout=15,
                 )
             else:
